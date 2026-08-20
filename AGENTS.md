@@ -38,6 +38,7 @@ newsnook/
 │   ├── sources/                 # registry · categories · presets · preferences
 │   ├── features/                # 领域能力（按边界分包）
 │   │   ├── translation/         # TranslationService + Provider 接口
+│   │   ├── ai/                  # AI 智读：解读 / 精选 / 助手 / 舆情（自备接口）
 │   │   ├── proxy/               # 智能分流 / 隧道 / 原生 HTTP
 │   │   ├── comments/            # 跟贴 Provider + 抽屉
 │   │   ├── appUpdate/           # GitHub Release 检测与应用内更新
@@ -68,6 +69,7 @@ newsnook/
 | 列表拉取与缓存 | `hooks/useFeeds.ts` · `lib/http.ts` · `lib/storage.ts` |
 | 站内正文 | `lib/resolveBody.ts` · `lib/sanitize.ts` · `lib/bodyCache.ts` · `screens/ReaderScreen.tsx` |
 | 翻译 | `features/translation/`（稳定边界：`types.ts`；新增引擎实现 Provider 并注册） |
+| AI 智读（解读/精选/助手/舆情） | `features/ai/`（`client.ts` OpenAI 兼容客户端 · `digest.ts` · `recommend.ts` · `assistant.ts` · `pool.ts` 本地检索）；界面 `screens/AiAssistantScreen.tsx` · `AiPicksScreen.tsx` · `settings/AiSettingsScreen.tsx` |
 | 代理 / 网络 | `features/proxy/` · `lib/http.ts` · `vite.config.ts` · `functions/` |
 | 跟贴 | `features/comments/` |
 | 墨水屏 | `lib/eink.ts` · `hooks/usePagedReader.ts` · `index.css` 中 `[data-eink]` |
@@ -102,7 +104,7 @@ newsnook/
 
 ### 5.2 明确不要做的事
 
-- 不要引入推荐算法、账号体系、自建内容后端或「热度排序强推」。
+- 不要引入服务端推荐、账号体系、自建内容后端或「热度排序强推」。AI 精选是唯一的推荐形态：必须保持用户主动触发、依赖本机标题级画像、经用户自备接口计算，且永不改变默认时间线排序。
 - 不要用外链浏览器替代站内正文主路径（错误态可提示打开原文，但不能变成默认阅读方式）。
 - 不要把 keystore、`.env.android.local`、用户 API Key、真实代理凭证写进仓库或示例。
 - 不要做网页爬虫规则编辑器（XPath/CSS 选择器配置 UI）；自建源走标准 Feed + Readability。
@@ -116,6 +118,7 @@ newsnook/
 |---|---|
 | 新内置源 | 在 `registry.ts` 注册；必要时扩展 `SourceKind` + `parseFeed` / `resolveBody`；更新 `docs/news-sources.md`（若涉及探测结论） |
 | 新翻译引擎 | 实现 `TranslationProvider`，在工厂注册；Reader 侧尽量零改动 |
+| AI 能力扩展 | 走 `features/ai/`：客户端只认 OpenAI 兼容 Chat Completions；提示词集中在 `prompts.ts`；新能力先在 `types.ts` 定形；Key 只存本机，禁止内置任何默认 Key |
 | 新跟贴源 | 实现 `CommentProvider`，在 `comments/service` 注册 |
 | UI 文案 | 与现有「我的 / 设置」语气一致；避免营销腔与平台化话术 |
 | 墨水屏 | 行为叠加在 `einkMode` 上，不是第三套主题色；关闭后须零残留 |
@@ -135,6 +138,7 @@ npm run test:translation
 npm run test:proxy
 npm run test:custom-sources
 npm run test:eink
+npm run test:ai
 
 npm run android:run         # 轻量 cloud
 npm run android:run:local   # 完整 local（Bergamot 需先 bergamot:init）

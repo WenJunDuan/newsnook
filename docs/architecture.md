@@ -58,6 +58,7 @@ newsnook/
 │  hooks/usePresets · usePagedReader                           │
 │  sources/registry · categories · preferences · presets       │
 │  features/translation/   TranslationService + Provider 接口    │
+│  features/ai/            AI 智读：解读/精选/助手/舆情（自备接口）│
 │  features/proxy/         智能分流 / 隧道 / 原生 HTTP 封装       │
 │  features/comments/      跟贴 Provider（网易/知乎/煎蛋等）      │
 │  features/mediaSniffer/  媒体候选 / HLS·DASH 清单 / DRM 状态  │
@@ -86,7 +87,7 @@ newsnook/
 | 阅读器 `ReaderScreen`（lazy） | 站内全文 / 视频 / 墨水屏分页 / 翻译 / 跟贴 / 错误重试 |
 | 设置栈 | 自定义订阅、分类与信源、场景预设、排版、外观、翻译、代理、存储、关于 |
 
-设置路由（`SettingsRoute`）包括：`typography`、`appearance`、`translation`、`proxy`、`presets`、`custom-sources`、`categories`、`channels`、`category-sources`、`category-edit`、`later`、`history`、`storage`、`about`、`changelog`、`licenses`。
+设置路由（`SettingsRoute`）包括：`typography`、`appearance`、`translation`、`proxy`、`ai`、`ai-assistant`、`ai-picks`、`presets`、`custom-sources`、`categories`、`channels`、`category-sources`、`category-edit`、`later`、`history`、`storage`、`about`、`changelog`、`licenses`。
 
 Android 物理返回键由 `@capacitor/app` 在 `App.tsx` 统一处理：阅读器 → 设置栈 → 单源焦点 → 退出确认。
 
@@ -123,6 +124,7 @@ Android 物理返回键由 `@capacitor/app` 在 `App.tsx` 统一处理：阅读�
 - 正文字号/字体/行高/段距/首行缩进（CSS 变量注入阅读器）
 - 主题 `system | light | dark`；风格方案 `ink | celadon | custom`（与明暗正交，custom 配色见 `lib/customScheme.ts`）；**墨水屏** `einkMode`（行为叠加，非第三主题）
 - 翻译引擎、语言、呈现方式、云 API 配置、列表标题翻译
+- AI 智读：OpenAI 兼容接口配置（endpoint / key / model，仅存本机）与解读、精选入口开关
 - 代理模式与地址、切换分类时自动刷新
 
 主题（`lib/theme.ts`）：明暗解析后写入 `<html data-theme>`；风格方案写入 `<html data-scheme>`（默认 `ink` 墨问，另有天青一套内置配色与 `custom` 自定义；已下线方案在读取偏好时自动回落墨问）。`index.css` 语义色 `--color-ink / --color-paper / …` 统一指向 `--tone-*`；内置方案块按 `[data-scheme][data-theme]` 重绑同一组 token，`--tone-cinnabar` 是「主题强调色」语义 token（各方案取色不同，名称保留兼容）。自定义配色（`lib/customScheme.ts`）：用户只选昼/夜两档的「底色 + 强调色」（存 `prefs.customScheme`），其余 token 由 `deriveSchemeTokens` 按对比度推导并内联到 `<html>`（内联优先于样式表，故无静态方案块；切回内置方案按 `CUSTOM_TOKEN_KEYS` 移除）；推导含文字色/强调色可读性兜底。图片查看器与视频播放器局部 `data-theme="dark"`（自定义方案下保持墨问夜读底色，与既有「固定深色」设计一致）。首屏由 `index.html` 内联脚本先行定色，并同步写入 `data-scheme` / `data-eink` 防闪。
@@ -215,7 +217,34 @@ ReaderScreen（只依赖 TranslationService）
 
 `features/translation/types.ts` 是稳定边界；新增提供商只需实现 `TranslationProvider` 并在工厂注册。`local` 构建变体注册 ML Kit 与 Bergamot 原生插件；`cloud` 变体提供空实现，保证轻量包不含 JNI 翻译库。
 
-### 8.5 跟贴评论
+### 8.5 AI 智读
+
+全部能力直连用户自备的 OpenAI 兼容接口（`features/ai/client.ts`，非流式 Chat Completions），API Key 只存本机偏好；未配置时各入口显示引导态。四条数据流：
+
+```text
+1. 文章解读（ReaderScreen 顶栏「解读」→ AiDigestSheet）
+   已消毒正文 HTML → htmlToPlainText（≤6000 字）→ digest.ts
+     → JSON{摘要/要点/标签/情绪} → ai:digests:v1 缓存（按模型区分，LRU 80 篇）
+
+2. AI 精选（FeedScreen 顶栏「精选」→ AiPicksScreen）
+   interest.ts 本地画像（最近阅读/稍后读标题 + 常读来源，纯本机统计）
+     + 当前分类候选（未读优先 ≤60 条）→ recommend.ts → [{index,reason}]
+   仅在独立页面展示，不改变首页时间线排序；「换一批」排除已推荐
+
+3. AI 助手（MeScreen → AiAssistantScreen）
+   pool.ts 汇总全部信源列表缓存（≤1500 篇）
+     → 查询词窗枚举 + 子串评分检索 → 命中报道注入【本地资料】
+     → assistant.ts 多轮问答，回答按【n】标注引用，可点回原文
+   对话历史存 ai:chat:v1（60 条截断）
+
+4. 企业舆情（助手内输入「舆情：实体名」）
+   searchArticlesByEntity 精确子串检索 → 结构化 Markdown 舆情报告
+   （总体倾向 / 正面动态 / 负面与风险 / 关注建议）
+```
+
+边界：无服务端、无默认 Key；发送内容仅限当次所需文章文本与标题级画像；`prompts.ts` 集中管理提示词；解读结果按模型缓存，换模型自动失效。
+
+### 8.6 跟贴评论
 
 ```text
 ReaderScreen / CommentsDrawer
@@ -226,7 +255,7 @@ ReaderScreen / CommentsDrawer
 
 仅部分源实现 `CommentProvider`；不支持时隐藏跟贴入口。
 
-### 8.6 持久化键
+### 8.7 持久化键
 
 前缀 `newsnook:`（`lib/storage.ts`）：
 
@@ -241,6 +270,8 @@ ReaderScreen / CommentsDrawer
 | `cache:v3:{sourceId}` | 列表元数据（约 7 天过期 / 12 小时标 stale） |
 | `body:v1:{id}` + `body:index` | 正文缓存（约 3MB 预算，稍后读 pin） |
 | `feed-translation:*` | 列表标题译文缓存 |
+| `ai:digests:v1` | 文章 AI 解读缓存（LRU 80 篇，localStorage） |
+| `ai:chat:v1` | AI 助手对话记录（60 条截断，localStorage） |
 
 策略：小配置同步镜像到 Capacitor Preferences；大列表/正文只走 localStorage。启动顺序：`hydrateNativeStorage` + `applyNativeChrome` → 再 mount React。
 
@@ -294,6 +325,8 @@ einkMode=false → 完全恢复现有上下滚动阅读，零残留
 | `lib/opml.ts` | OPML 导入导出与 Feed 探测 |
 | `lib/sanitize.ts` | DOMPurify |
 | `features/translation/*` | 翻译领域模型与可替换提供商 |
+| `features/ai/*` | AI 智读：OpenAI 兼容客户端、解读/精选/助手/舆情与本地检索池 |
+| `screens/AiAssistantScreen.tsx` / `AiPicksScreen.tsx` | AI 助手对话 / AI 精选列表 |
 | `features/proxy/*` | 代理配置、路由与原生隧道 |
 | `features/comments/*` | 跟贴 Provider 与抽屉 UI |
 | `features/appUpdate/*` | 版本检测、更新对话框、变体切换 |
@@ -368,6 +401,7 @@ npm run android:apk | android:aab
 | 主题 / 墨水屏 | `src/lib/theme.ts` · `src/lib/eink.ts` · `src/index.css` |
 | HTTP / 代理 | `src/lib/http.ts` · `src/features/proxy/` |
 | 翻译 | `src/features/translation/` |
+| AI 智读 | `src/features/ai/` |
 | 跟贴 | `src/features/comments/` |
 | 媒体嗅探 / 播放器 | `src/features/mediaSniffer/` · `src/components/InkVideoPlayer.tsx` · `docs/xiutan.md` |
 | 应用更新 | `src/features/appUpdate/` |

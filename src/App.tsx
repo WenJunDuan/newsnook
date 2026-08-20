@@ -29,6 +29,8 @@ import {
 import { chineseDate } from './lib/time'
 import type { Article } from './lib/types'
 import { THEME_MODES, THEME_SCHEMES, schemeSeedColors } from './lib/theme'
+import { AiAssistantScreen } from './screens/AiAssistantScreen'
+import { AiPicksScreen } from './screens/AiPicksScreen'
 import { ChannelsScreen } from './screens/ChannelsScreen'
 import { FeedScreen } from './screens/FeedScreen'
 import { MeScreen } from './screens/MeScreen'
@@ -48,6 +50,8 @@ import { StorageScreen } from './screens/settings/StorageScreen'
 import { TypographyScreen } from './screens/settings/TypographyScreen'
 import { TranslationScreen } from './screens/settings/TranslationScreen'
 import { ProxyScreen } from './screens/settings/ProxyScreen'
+import { AiSettingsScreen } from './screens/settings/AiSettingsScreen'
+import { aiSummaryLabel } from './features/ai/config'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import {
   BRAND_TITLE,
@@ -86,6 +90,7 @@ import {
   sourceIdsForCategoryWithPrefs,
   toggleCategorySource,
   toggleCategoryVisible,
+  updateAiPrefs,
   updateCustomCategory,
   updateCustomSource,
   updateTypography,
@@ -131,6 +136,9 @@ type SettingsRoute =
   | { name: 'storage' }
   | { name: 'translation' }
   | { name: 'proxy' }
+  | { name: 'ai' }
+  | { name: 'ai-assistant' }
+  | { name: 'ai-picks' }
   | { name: 'later' }
   | { name: 'history' }
   | { name: 'about' }
@@ -241,7 +249,8 @@ export default function App() {
       tab === 'me' ||
       settingsRoute?.name === 'storage' ||
       settingsRoute?.name === 'history' ||
-      settingsRoute?.name === 'later'
+      settingsRoute?.name === 'later' ||
+      settingsRoute?.name === 'ai-picks'
     if (!needsSnapshot) return
     refreshCacheSnapshot()
   }, [tab, settingsRoute, refreshCacheSnapshot])
@@ -610,6 +619,8 @@ export default function App() {
     return `${mode} · ${prefs.proxy.proxyUrl ? '已配置' : '未填写地址'}`
   }, [prefs.proxy])
 
+  const aiSummary = useMemo(() => aiSummaryLabel(prefs.ai), [prefs.ai])
+
   const renderSettings = () => {
     if (!settingsRoute) return null
 
@@ -670,6 +681,45 @@ export default function App() {
         <TranslationScreen
           prefs={prefs.translation}
           onChange={(translation) => update((prev) => ({ ...prev, translation }))}
+          onBack={() => setSettingsRoute(null)}
+        />
+      )
+    }
+
+    if (settingsRoute.name === 'ai') {
+      return (
+        <AiSettingsScreen
+          prefs={prefs.ai}
+          translationOpenAi={prefs.translation.cloud.openai}
+          onChange={(ai) => update((prev) => updateAiPrefs(prev, ai))}
+          onBack={() => setSettingsRoute(null)}
+        />
+      )
+    }
+
+    if (settingsRoute.name === 'ai-assistant') {
+      return (
+        <AiAssistantScreen
+          prefs={prefs.ai}
+          liveArticles={fetchedArticles}
+          onOpenArticle={openArticle}
+          onOpenAiSettings={() => setSettingsRoute({ name: 'ai' })}
+          onBack={() => setSettingsRoute(null)}
+        />
+      )
+    }
+
+    if (settingsRoute.name === 'ai-picks') {
+      return (
+        <AiPicksScreen
+          prefs={prefs.ai}
+          articles={articles}
+          categoryLabel={activeCategory?.label}
+          history={cachedHistory}
+          later={later}
+          readIds={readIds}
+          onOpen={openArticle}
+          onOpenAiSettings={() => setSettingsRoute({ name: 'ai' })}
           onBack={() => setSettingsRoute(null)}
         />
       )
@@ -916,11 +966,14 @@ export default function App() {
           translationSummary={translationSummary}
           proxySummary={proxySummary}
           storageSummary={storageSummary}
+          aiSummary={aiSummary}
           hasUpdate={appUpdate.hasUpdate}
           availableVersion={appUpdate.availableVersion}
           onBackToReading={readerReturnArticle ? restoreReaderFromSettings : undefined}
           onOpenLater={() => setSettingsRoute({ name: 'later' })}
           onOpenHistory={() => setSettingsRoute({ name: 'history' })}
+          onOpenAiAssistant={() => setSettingsRoute({ name: 'ai-assistant' })}
+          onOpenAiSettings={() => setSettingsRoute({ name: 'ai' })}
           onOpenCustomSources={() => setSettingsRoute({ name: 'custom-sources' })}
           onOpenCategories={() => setSettingsRoute({ name: 'categories', returnTo: 'me' })}
           onOpenPresets={() => setSettingsRoute({ name: 'presets' })}
@@ -970,6 +1023,11 @@ export default function App() {
         presetSwitcher={presetSwitcherConfig}
         translationPrefs={prefs.translation}
         customSources={prefs.customSources}
+        onOpenAiPicks={
+          prefs.ai.recommendEnabled
+            ? () => setSettingsRoute({ name: 'ai-picks' })
+            : undefined
+        }
         onRefresh={runRefresh}
         onLoadMore={() => void loadMore(listScopeIds)}
         onOpen={openArticle}
@@ -1067,6 +1125,13 @@ export default function App() {
             onCacheChange={notifyCacheChange}
             overlayCloserRef={readerOverlayCloserRef}
             translationPrefs={prefs.translation}
+            aiPrefs={prefs.ai}
+            onOpenAiSettings={() => {
+              setReaderReturnArticle(reading)
+              setReading(null)
+              setTab('me')
+              setSettingsRoute({ name: 'ai' })
+            }}
             customSources={prefs.customSources}
             einkMode={Boolean(prefs.einkMode)}
             wifiOnlyAutoLoadMedia={Boolean(prefs.wifiOnlyAutoLoadMedia)}

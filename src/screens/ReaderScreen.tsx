@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from 'react'
 import { Browser } from '@capacitor/browser'
 import { Capacitor } from '@capacitor/core'
-import { ArrowLeft, BookmarkCheck, BookmarkPlus, Globe, Languages, LoaderCircle, MessageSquare, RefreshCw, X } from 'lucide-react'
+import { ArrowLeft, BookmarkCheck, BookmarkPlus, Globe, Languages, LoaderCircle, MessageSquare, RefreshCw, Sparkles, X } from 'lucide-react'
 
 import { ImageLightbox } from '../components/ImageLightbox'
 import { EinkReaderMenu } from '../components/EinkReaderMenu'
@@ -37,6 +37,9 @@ import {
 import type { TranslatedArticleContent, TranslationPrefs } from '../features/translation/types'
 import { fetchCommentCount, supportsComments } from '../features/comments/service'
 import { CommentsDrawer } from '../features/comments/components/CommentsDrawer'
+import { AiDigestSheet } from '../features/ai/components/AiDigestSheet'
+import { isAiConfigured } from '../features/ai/config'
+import type { AiPrefs } from '../features/ai/types'
 import type { NewsSource } from '../sources/registry'
 
 interface Props {
@@ -48,6 +51,10 @@ interface Props {
   /** 返回 true 表示已消费系统返回（例如关闭大图），供 App 回退栈使用 */
   overlayCloserRef?: MutableRefObject<(() => boolean) | null>
   translationPrefs: TranslationPrefs
+  /** AI 智读偏好；缺省或关闭解读入口时不显示「解读」按钮 */
+  aiPrefs?: AiPrefs
+  /** 未配置 AI 接口时由解读抽屉跳转设置页 */
+  onOpenAiSettings?: () => void
   customSources?: NewsSource[]
   /** 墨水屏模式：分页阅读；false/缺省时保持滚动阅读 */
   einkMode?: boolean
@@ -71,6 +78,8 @@ export function ReaderScreen({
   onCacheChange,
   overlayCloserRef,
   translationPrefs,
+  aiPrefs,
+  onOpenAiSettings,
   customSources,
   einkMode = false,
   fontScale = 1,
@@ -99,6 +108,7 @@ export function ReaderScreen({
   const [deferredPhases, setDeferredPhases] = useState<Record<string, DeferredHostPhase>>({})
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
   const [commentsOpen, setCommentsOpen] = useState(false)
+  const [aiDigestOpen, setAiDigestOpen] = useState(false)
   const [commentCount, setCommentCount] = useState<number | undefined>()
   const [translated, setTranslated] = useState<TranslatedArticleContent | null>(null)
   const [showTranslation, setShowTranslation] = useState(false)
@@ -156,7 +166,17 @@ export function ReaderScreen({
         overlayCloserRef.current = prev
       }
     }
-  }, [commentsOpen, einkMenuOpen, overlayCloserRef])
+    if (aiDigestOpen) {
+      const prev = overlayCloserRef.current
+      overlayCloserRef.current = () => {
+        setAiDigestOpen(false)
+        return true
+      }
+      return () => {
+        overlayCloserRef.current = prev
+      }
+    }
+  }, [aiDigestOpen, commentsOpen, einkMenuOpen, overlayCloserRef])
 
   const handleScroll = useCallback(() => {
     if (einkMode) return
@@ -287,6 +307,7 @@ export function ReaderScreen({
       return {}
     })
     setDeferredPhases({})
+    setAiDigestOpen(false)
   }, [article.id])
 
   useEffect(() => {
@@ -808,6 +829,29 @@ export function ReaderScreen({
               {article.sourceName}
             </span>
             <div className="flex shrink-0 items-center gap-1">
+              {aiPrefs?.digestEnabled && (
+                <button
+                  type="button"
+                  disabled={loadState !== 'ready'}
+                  onClick={() => setAiDigestOpen(true)}
+                  aria-pressed={aiDigestOpen}
+                  aria-label="AI 解读"
+                  className="flex h-9 items-center gap-1 px-1 transition-colors duration-200 disabled:opacity-40"
+                >
+                  <Sparkles
+                    size={14}
+                    strokeWidth={1.7}
+                    className={aiDigestOpen ? 'text-cinnabar' : 'text-paper-muted'}
+                  />
+                  <span
+                    className={`hidden font-mono text-[10px] tracking-[0.08em] min-[390px]:inline ${
+                      aiDigestOpen ? 'text-cinnabar-soft' : 'text-paper-muted'
+                    }`}
+                  >
+                    解读
+                  </span>
+                </button>
+              )}
               <button
                 type="button"
                 disabled={loadState !== 'ready' || translationState === 'loading'}
@@ -1260,6 +1304,25 @@ export function ReaderScreen({
         onClose={() => setCommentsOpen(false)}
         article={commentsArticle}
       />
+
+      {aiPrefs && (
+        <AiDigestSheet
+          open={aiDigestOpen}
+          onClose={() => setAiDigestOpen(false)}
+          article={article}
+          bodyHtml={loadState === 'ready' ? html : ''}
+          config={aiPrefs.config}
+          configured={isAiConfigured(aiPrefs)}
+          onOpenAiSettings={
+            onOpenAiSettings
+              ? () => {
+                  setAiDigestOpen(false)
+                  onOpenAiSettings()
+                }
+              : undefined
+          }
+        />
+      )}
     </div>
   )
 }
