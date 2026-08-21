@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import {
   ArrowLeft,
   Bookmark,
+  BotMessageSquare,
   ChevronRight,
   Contrast,
   Database,
@@ -12,6 +13,7 @@ import {
   LayoutGrid,
   LayoutTemplate,
   Rss,
+  Sparkles,
   Type,
 } from 'lucide-react'
 
@@ -31,10 +33,13 @@ interface Props {
   translationSummary: string
   proxySummary: string
   storageSummary: string
+  aiSummary: string
   hasUpdate?: boolean
   availableVersion?: string
   onOpenLater: () => void
   onOpenHistory: () => void
+  onOpenAiAssistant: () => void
+  onOpenAiSettings: () => void
   onOpenCustomSources: () => void
   onOpenCategories: () => void
   onOpenPresets: () => void
@@ -96,10 +101,13 @@ export function MeScreen({
   translationSummary,
   proxySummary,
   storageSummary,
+  aiSummary,
   hasUpdate,
   availableVersion,
   onOpenLater,
   onOpenHistory,
+  onOpenAiAssistant,
+  onOpenAiSettings,
   onOpenCustomSources,
   onOpenCategories,
   onOpenPresets,
@@ -166,6 +174,26 @@ export function MeScreen({
             title="最近阅读"
             caption={history.length ? `${history.length} 篇` : '打开过的文章会出现在这里'}
             onClick={onOpenHistory}
+          />
+        </ul>
+
+        <div className="page-x flex items-center gap-3 pt-8 pb-2">
+          <span className="font-mono text-[10px] tracking-[0.28em] text-paper-faint">AI 智读</span>
+          <span className="h-px flex-1 bg-haze" aria-hidden />
+        </div>
+
+        <ul className="divide-y divide-haze border-y border-haze md:grid md:grid-cols-2 md:gap-px md:divide-y-0 md:bg-haze">
+          <SettingsRow
+            icon={BotMessageSquare}
+            title="AI 助手"
+            caption="问答 · 查找感兴趣的新闻 · 企业舆情报告"
+            onClick={onOpenAiAssistant}
+          />
+          <SettingsRow
+            icon={Sparkles}
+            title="AI 智读设置"
+            caption={aiSummary}
+            onClick={onOpenAiSettings}
           />
         </ul>
 
