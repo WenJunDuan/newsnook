@@ -3,7 +3,7 @@ import { Bookmark, Newspaper } from 'lucide-react'
 
 const TODAY_DOUBLE_TAP_MS = 360
 
-export type TabKey = 'today' | 'me'
+export type TabKey = 'today' | 'sites' | 'me'
 
 const TABS: { key: TabKey; label: string; Icon: typeof Newspaper }[] = [
   { key: 'today', label: '速闻', Icon: Newspaper },
@@ -33,7 +33,8 @@ export const TabBar = memo(function TabBar({
   return (
     <nav
       data-surface="tabbar"
-      className="relative z-20 shrink-0 border-t border-haze/50 bg-ink/92 pb-[var(--sab)] backdrop-blur-xl transition-colors duration-300 lg:hidden"
+      className="relative z-20 shrink-0 border-t border-haze/50 bg-ink/92 backdrop-blur-xl transition-colors duration-300 lg:hidden"
+      style={{ paddingBottom: 'var(--sab)' }}
     >
       <ul className="flex h-13 items-stretch">
         {TABS.map(({ key, label, Icon }) => {

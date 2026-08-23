@@ -1,5 +1,5 @@
 import { LoaderCircle, Play, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 
 import { discoverMediaDescriptor } from '../features/mediaSniffer/service'
@@ -9,7 +9,7 @@ import {
   isYoutubeCustomPlayable,
   type YoutubeEmbedDescriptor,
 } from '../lib/youtubeEmbeds'
-import { InkVideoPlayer } from './InkVideoPlayer'
+import { InkVideoPlayer, type InkVideoPlayerFullscreenHandle } from './InkVideoPlayer'
 
 interface Props {
   rootRef: RefObject<HTMLElement | null>
@@ -20,6 +20,8 @@ interface Props {
   deferLoad?: boolean
   unlockedUrls?: ReadonlySet<string>
   onUnlocked?: (src: string) => void
+  /** 播放器全屏句柄：让阅读器返回键在全屏时先退出全屏 */
+  fullscreenHandleRef?: MutableRefObject<InkVideoPlayerFullscreenHandle | null>
 }
 
 interface MountedYoutubeEmbed extends YoutubeEmbedDescriptor {
@@ -42,7 +44,8 @@ function YoutubeEmbedPlayer({
   deferLoad,
   sourcePage,
   onUnlocked,
-}: YoutubeEmbedDescriptor & Pick<Props, 'deferLoad' | 'sourcePage'> & { onUnlocked?: () => void }) {
+  fullscreenHandleRef,
+}: YoutubeEmbedDescriptor & Pick<Props, 'deferLoad' | 'sourcePage' | 'fullscreenHandleRef'> & { onUnlocked?: () => void }) {
   const [phase, setPhase] = useState<LoadPhase>('idle')
   const [attempt, setAttempt] = useState(0)
   const [thumbnailFailed, setThumbnailFailed] = useState(false)
@@ -127,6 +130,7 @@ function YoutubeEmbedPlayer({
         onPlaybackError={handlePlaybackError}
         onRefreshSource={startLoading}
         onUnlocked={onUnlocked}
+        fullscreenHandleRef={fullscreenHandleRef}
       />
     )
   }
@@ -214,6 +218,7 @@ export function InlineYoutubeEmbeds({
   deferLoad,
   unlockedUrls,
   onUnlocked,
+  fullscreenHandleRef,
 }: Props) {
   const [mounted, setMounted] = useState<MountedYoutubeEmbed[]>([])
 
@@ -251,6 +256,7 @@ export function InlineYoutubeEmbeds({
         sourcePage={sourcePage}
         deferLoad={Boolean(deferLoad && !unlockedUrls?.has(video.src))}
         onUnlocked={() => onUnlocked?.(video.src)}
+        fullscreenHandleRef={fullscreenHandleRef}
       />,
       host,
       video.src,

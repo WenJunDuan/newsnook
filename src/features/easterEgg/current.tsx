@@ -37,7 +37,10 @@ export function CurrentEasterEgg({ onClose }: { onClose: () => void }) {
   }, [])
 
   return (
-    <div className="relative -mt-[var(--sat)] -mb-[var(--sab)] flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div
+      className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+      style={{ marginTop: 'calc(0px - var(--sat))', marginBottom: 'calc(0px - var(--sab))' }}
+    >
       <iframe
         title="纸鹤行"
         src={craneGameUrl}

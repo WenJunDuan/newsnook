@@ -15,7 +15,7 @@ import okhttp3.ResponseBody;
 
 final class MediaProbe {
     static final int MAX_BYTES = 65536;
-    static final int MAX_PER_SESSION = 12;
+    static final int MAX_PER_SESSION = 24;
 
     static final class Result {
         final String mimeType;

@@ -8,6 +8,30 @@ function hashId(input: string): string {
   return md5Hex(input).slice(0, 12)
 }
 
+/** 详情页相关卡片点击：与列表条目使用同一套 id，已读状态可复用。 */
+export function articleFromRelatedLink(
+  from: Article,
+  originUrl: string,
+  title: string,
+  image?: string,
+): Article {
+  const trimmed = title.trim() || originUrl
+  return {
+    id: `${from.sourceId}:${hashId(originUrl)}`,
+    title: trimmed,
+    summary: trimmed.slice(0, 220),
+    image,
+    publishedAt: Date.now(),
+    hasRealDate: false,
+    sourceId: from.sourceId,
+    sourceName: from.sourceName,
+    sourceLabel: from.sourceLabel,
+    sourceGroup: from.sourceGroup,
+    originUrl,
+    contentType: from.contentType,
+  }
+}
+
 /** CatalogItem[] → App 信息流 Article[] */
 export function catalogHtmlToArticles(
   source: NewsSource,

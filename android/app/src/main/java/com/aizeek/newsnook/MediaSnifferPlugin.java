@@ -2,8 +2,13 @@ package com.aizeek.newsnook;
 
 import android.annotation.SuppressLint;
 import android.graphics.Color;
+import android.graphics.Outline;
 import android.net.Uri;
+import android.util.DisplayMetrics;
+import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -84,6 +89,21 @@ public class MediaSnifferPlugin extends Plugin {
         ))
     );
 
+    /** Visible, long-lived origin player surface (at most one). */
+    private String liveSessionId;
+    private WebView liveWebView;
+    private FrameLayout liveHost;
+    private ScriptHandler liveScriptHandler;
+    private JSONArray liveNetworkEvents;
+    private LiveProbeQueue liveProbeQueue;
+    private final AtomicBoolean liveActive = new AtomicBoolean(false);
+    /** Entry URL/referrer; blank-fallback reload uses these when MUTE_AUDIO is unavailable. */
+    private String liveEntryUrl;
+    private String liveReferrer;
+    private boolean liveSuspended;
+    /** True when hide had to navigate to about:blank (no WebView-level mute). */
+    private boolean liveBlanked;
+
     private static final String PROBE_SCRIPT_TEMPLATE = """
         (() => {
           if (window.__newsnookMediaProbeInstalled) return;
@@ -94,14 +114,19 @@ public class MediaSnifferPlugin extends Plugin {
           const events = window.__newsnookMediaEvents = [];
           const seen = new Set();
           const inspectedPayloads = new WeakSet();
+          const inspectedScripts = new WeakSet();
           const isHighValue = (event) => {
+            // Progressive mp4/webm often arrives as preroll. Arming quiet-exit on
+            // it ends the session before the real HLS/DASH request. Only
+            // manifests, MSE, and player JSON count as completion signals.
             if (!event || event.source === 'performance') return false;
             const mime = String(event.mimeType || event.mseMimeType || '').toLowerCase();
-            if (/^(video|audio)\\//.test(mime)) return true;
+            const url = String(event.url || '').toLowerCase();
             if (mime.includes('mpegurl') || mime.includes('dash+xml') || mime.includes('vnd.apple.mpegurl')) return true;
+            if (/\\.(?:m3u8|mpd)(?:[?#]|$)/.test(url)) return true;
             if (event.source === 'mse' && event.mseMimeType) return true;
-            if (event.source === 'dom' && event.url) return true;
-            if ((event.source === 'fetch' || event.source === 'xhr') && event.bodyText) return true;
+            if ((event.source === 'fetch' || event.source === 'xhr') && event.bodyText && looksLikePlayerJson(event.bodyText)) return true;
+            if (event.source === 'static' && event.url && /\\.(?:m3u8|mpd)(?:[?#]|$)/i.test(String(event.url))) return true;
             return false;
           };
           const push = (event) => {
@@ -137,6 +162,48 @@ public class MediaSnifferPlugin extends Plugin {
               if (observation && typeof observation === 'object') push({ ...observation, fromIframe: true });
             } catch (_) {}
           });
+          const looksMediaUrl = (value) => {
+            const url = String(value || '');
+            if (!url || url.startsWith('blob:')) return url.startsWith('blob:');
+            return /\\.(?:m3u8|mpd|mp4|m4v|webm|mov|flv|mkv|m4a|aac|mp3|ogg|opus|m4s|ts|cmfv|cmfa)(?:[?#]|$)/i.test(url);
+          };
+          const looksLikePlayerJson = (text) => {
+            const trimmed = String(text || '').trim();
+            if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
+            return /"(?:url|playurl|play_url|manifestUrl|hlsmanifesturl|dashmanifesturl|manifest_url|video_url|media_url|backupUrl|backup_url|file)"\\s*:/i.test(trimmed)
+              || /"(?:video|audio|stream|streams|playinfo|player)"\\s*:/i.test(trimmed);
+          };
+          const triggerPlayback = () => {
+            if (window.__newsnookPlaybackTriggered) return;
+            try {
+              const playPattern = /play|watch|观看|播放/i;
+              const candidates = [];
+              document.querySelectorAll('button,[role="button"]').forEach((el) => {
+                const text = (el.textContent || '').trim();
+                const label = [text, el.getAttribute('aria-label') || '', el.getAttribute('title') || ''].join(' ');
+                if (playPattern.test(label)) candidates.push({ priority: 0, element: el });
+              });
+              document.querySelectorAll('a[href]').forEach((el) => {
+                const href = el.getAttribute('href') || '';
+                try {
+                  const target = new URL(href, location.href);
+                  if (target.origin !== location.origin) return;
+                  if (/\\/(?:play|watch|vodplay|player|embed|video\\/play)(?:[/?#]|$)/i.test(target.pathname + target.search + target.hash)) candidates.push({ priority: 1, element: el });
+                } catch (_) {}
+              });
+              document.querySelectorAll('iframe[src],iframe[data-src]').forEach((el) => {
+                const raw = el.getAttribute('src') || el.getAttribute('data-src') || '';
+                try {
+                  const target = new URL(raw, location.href);
+                  if (/\\/(?:player|embed|play|watch)(?:[/?#]|$)/i.test(target.pathname + target.search + target.hash)) candidates.push({ priority: 2, element: el });
+                } catch (_) {}
+              });
+              const candidate = candidates.sort((left, right) => left.priority - right.priority)[0];
+              if (!candidate) return;
+              window.__newsnookPlaybackTriggered = true;
+              try { candidate.element.click(); } catch (_) {}
+            } catch (_) {}
+          };
           const positiveNumber = (value) => {
             const number = Number(value);
             return Number.isFinite(number) && number > 0 ? number : undefined;
@@ -153,24 +220,29 @@ public class MediaSnifferPlugin extends Plugin {
                 .find((item) => typeof item === 'string' && item);
               const mimeType = [value.mimeType, value.contentType, value.mime]
                 .find((item) => typeof item === 'string');
-              if (url) {
+              // 图片 URL（favicon/logo/海报）不是可播放媒体，宽度高度不构成视频信号
+              const pathOnly = String(url).split('?')[0].split('#')[0];
+              const isImagePath = /\\.(?:png|jpe?g|gif|webp|avif|svg|ico|bmp|tiff?)$/i.test(pathOnly);
+              if (url && !isImagePath) {
                 const codecText = `${mimeType || ''} ${typeof value.codecs === 'string' ? value.codecs : ''}`;
                 const width = positiveNumber(value.width);
                 const height = positiveNumber(value.height);
-                const hasVideo = Boolean(width || height || value.qualityLabel || /^video\\//i.test(mimeType || '') || /(?:avc1|av01|hvc1|hev1|vp0?9|vp8)/i.test(codecText));
+                const hasVideo = Boolean(value.qualityLabel || /^video\\//i.test(mimeType || '') || /(?:avc1|av01|hvc1|hev1|vp0?9|vp8)/i.test(codecText));
                 const hasAudio = Boolean(value.audioQuality || value.audioSampleRate || value.audioChannels || /^audio\\//i.test(mimeType || '') || /(?:mp4a|aac|opus|vorbis|ac-3|ec-3)/i.test(codecText));
-                push({
-                  source: 'static',
-                  url,
-                  mimeType,
-                  codecs: typeof value.codecs === 'string' ? value.codecs : undefined,
-                  mediaKind: /^audio\\//i.test(mimeType || '') ? 'audio' : hasVideo ? 'video' : undefined,
-                  hasAudio: hasAudio ? true : hasVideo && value.qualityLabel ? false : undefined,
-                  hasVideo: hasVideo || undefined,
-                  width,
-                  height,
-                  bitrate: positiveNumber(value.bitrate),
-                });
+                if (looksMediaUrl(url) || mimeType || hasVideo || hasAudio) {
+                  push({
+                    source: 'static',
+                    url,
+                    mimeType,
+                    codecs: typeof value.codecs === 'string' ? value.codecs : undefined,
+                    mediaKind: /^audio\\//i.test(mimeType || '') ? 'audio' : hasVideo ? 'video' : undefined,
+                    hasAudio: hasAudio ? true : hasVideo && value.qualityLabel ? false : undefined,
+                    hasVideo: hasVideo || undefined,
+                    width,
+                    height,
+                    bitrate: positiveNumber(value.bitrate),
+                  });
+                }
               }
             } catch (_) {}
             try { Object.values(value).forEach((item) => inspectPayload(item, depth + 1)); } catch (_) {}
@@ -214,21 +286,43 @@ public class MediaSnifferPlugin extends Plugin {
               }
             }
           };
+          const inspectScriptPayloads = () => {
+            try {
+              document.querySelectorAll('script').forEach((script) => {
+                if (inspectedScripts.has(script)) return;
+                inspectedScripts.add(script);
+                const text = script.textContent || '';
+                if (!text || text.length > maxBodyText) return;
+                for (const match of text.matchAll(/https?:\\\\?\\/\\\\?\\/[^\\s"'<>]+/gi)) {
+                  const url = match[0]
+                    .replace(/\\\\\\//g, '/')
+                    .replace(/\\\\u0026/gi, '&')
+                    .replace(/[),;]+$/g, '');
+                  if (looksMediaUrl(url)) push({ source: 'static', url });
+                }
+              });
+            } catch (_) {}
+          };
           const scan = () => {
             inspect(document.documentElement);
             inspectPlayerState();
+            inspectScriptPayloads();
             try {
               for (const entry of performance.getEntriesByType('resource')) {
-                push({ source: 'performance', url: entry.name });
+                if (looksMediaUrl(entry.name)) push({ source: 'performance', url: entry.name });
               }
             } catch (_) {}
           };
           const startDom = () => {
             scan();
+            setTimeout(triggerPlayback, 400);
+            setTimeout(triggerPlayback, 1200);
             try {
               new MutationObserver((records) => records.forEach((record) => {
                 inspect(record.target);
+                if (record.target?.tagName === 'SCRIPT') inspectScriptPayloads();
                 record.addedNodes.forEach(inspect);
+                record.addedNodes.forEach((node) => { if (node?.tagName === 'SCRIPT') inspectScriptPayloads(); });
               })).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'data-src', 'data-video-src'] });
               document.addEventListener('play', (event) => inspect(event.target), true);
               document.addEventListener('loadedmetadata', (event) => inspect(event.target), true);
@@ -252,7 +346,7 @@ public class MediaSnifferPlugin extends Plugin {
                   if (!Number.isFinite(reported) || reported <= maxBodyText) {
                     try {
                       const text = await response.clone().text();
-                      if (text && text.length <= maxBodyText) event.bodyText = text;
+                      if (text && text.length <= maxBodyText && looksLikePlayerJson(text)) event.bodyText = text;
                     } catch (_) {}
                   }
                 }
@@ -279,7 +373,7 @@ public class MediaSnifferPlugin extends Plugin {
                     } else {
                       text = this.responseText;
                     }
-                    if (typeof text === 'string' && text.length > 0 && text.length <= maxBodyText) event.bodyText = text;
+                    if (typeof text === 'string' && text.length > 0 && text.length <= maxBodyText && looksLikePlayerJson(text)) event.bodyText = text;
                   }
                 } catch (_) {}
                 push(event);
@@ -303,7 +397,9 @@ public class MediaSnifferPlugin extends Plugin {
             };
           } catch (_) {}
           try {
-            new PerformanceObserver((list) => list.getEntries().forEach((entry) => push({ source: 'performance', url: entry.name }))).observe({ type: 'resource', buffered: true });
+            new PerformanceObserver((list) => list.getEntries().forEach((entry) => {
+              if (looksMediaUrl(entry.name)) push({ source: 'performance', url: entry.name });
+            })).observe({ type: 'resource', buffered: true });
           } catch (_) {}
           window.__newsnookCollectMedia = () => { scan(); return events; };
         })();
@@ -395,6 +491,143 @@ public class MediaSnifferPlugin extends Plugin {
         } catch (IOException error) {
             call.reject("无法启动本地视频代理", error);
         }
+    }
+
+    @PluginMethod
+    public void startLiveSession(PluginCall call) {
+        String url = call.getString("url");
+        if (!isAllowedPageUrl(url)) {
+            call.reject("仅支持 HTTP/HTTPS 原文地址");
+            return;
+        }
+        String referrer = call.getString("referrer");
+        if (!isAllowedPageUrl(referrer)) referrer = null;
+        String sessionId = call.getString("sessionId");
+        if (sessionId == null || sessionId.trim().isEmpty()) sessionId = UUID.randomUUID().toString();
+        String finalReferrer = referrer;
+        String finalSessionId = sessionId;
+        getActivity().runOnUiThread(() -> startLiveSessionOnUi(call, url, finalReferrer, finalSessionId));
+    }
+
+    @PluginMethod
+    public void stopLiveSession(PluginCall call) {
+        String sessionId = call.getString("sessionId");
+        getActivity().runOnUiThread(() -> {
+            stopLiveSessionOnUi(sessionId);
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
+    public void setLiveSessionVisible(PluginCall call) {
+        boolean visible = call.getBoolean("visible", true);
+        getActivity().runOnUiThread(() -> {
+            setLiveSessionVisibleOnUi(visible);
+            call.resolve();
+        });
+    }
+
+    /**
+     * Hide does not destroy the live session (「返回原站播放器」 / 403 旁路仍可保留).
+     * Prefer WebView-level mute + pause so the document stays; blank only as fallback.
+     */
+    private void setLiveSessionVisibleOnUi(boolean visible) {
+        WebView webView = liveWebView;
+        if (webView == null) return;
+        if (visible) {
+            if (liveSuspended) {
+                liveSuspended = false;
+                webView.onResume();
+                setLiveWebViewAudioMuted(webView, false);
+                if (liveBlanked) {
+                    liveBlanked = false;
+                    reloadLiveEntry(webView);
+                }
+            }
+            webView.setVisibility(View.VISIBLE);
+            return;
+        }
+        pauseLiveSessionMedia(webView);
+        liveSuspended = true;
+        boolean muted = setLiveWebViewAudioMuted(webView, true);
+        if (!muted) {
+            // Old WebView builds: cross-origin player iframes ignore same-doc pause().
+            liveBlanked = true;
+            webView.loadUrl("about:blank");
+        } else {
+            liveBlanked = false;
+        }
+        webView.onPause();
+        webView.setVisibility(View.GONE);
+    }
+
+    private static boolean setLiveWebViewAudioMuted(WebView webView, boolean muted) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) return false;
+        try {
+            WebViewCompat.setAudioMuted(webView, muted);
+            return true;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private void reloadLiveEntry(WebView webView) {
+        String url = liveEntryUrl;
+        if (url == null || url.trim().isEmpty()) return;
+        String referrer = liveReferrer;
+        if (referrer == null || referrer.trim().isEmpty()) {
+            webView.loadUrl(url);
+            return;
+        }
+        Map<String, String> navigationHeaders = new HashMap<>();
+        navigationHeaders.put("Referer", referrer);
+        webView.loadUrl(url, navigationHeaders);
+    }
+
+    private static void pauseLiveSessionMedia(WebView webView) {
+        webView.evaluateJavascript(
+            "(function(){try{"
+                + "var pauseAll=function(doc){"
+                + "if(!doc)return;"
+                + "doc.querySelectorAll('video,audio').forEach(function(m){"
+                + "try{m.pause()}catch(e){}"
+                + "try{m.muted=true}catch(e){}"
+                + "});"
+                + "};"
+                + "pauseAll(document);"
+                + "document.querySelectorAll('iframe').forEach(function(frame){"
+                + "try{pauseAll(frame.contentDocument)}catch(e){}"
+                + "});"
+                + "}catch(e){}})();",
+            null
+        );
+    }
+
+    /**
+     * Align the live origin WebView to the Reader media slot.
+     * Coordinates are CSS pixels relative to the Capacitor WebView viewport
+     * (same space as Element.getBoundingClientRect()).
+     */
+    @PluginMethod
+    public void setLiveSessionBounds(PluginCall call) {
+        Double x = call.getDouble("x");
+        Double y = call.getDouble("y");
+        Double width = call.getDouble("width");
+        Double height = call.getDouble("height");
+        Double cornerRadius = call.getDouble("cornerRadius", 0d);
+        if (x == null || y == null || width == null || height == null) {
+            call.reject("x/y/width/height required");
+            return;
+        }
+        final double cssX = x;
+        final double cssY = y;
+        final double cssW = width;
+        final double cssH = height;
+        final double cssRadius = cornerRadius == null ? 0d : Math.max(0d, cornerRadius);
+        getActivity().runOnUiThread(() -> {
+            applyLiveSessionBoundsOnUi(cssX, cssY, cssW, cssH, cssRadius);
+            call.resolve();
+        });
     }
 
     static void clearPlaybackContexts() {
@@ -619,6 +852,192 @@ public class MediaSnifferPlugin extends Plugin {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
+    private void startLiveSessionOnUi(
+        PluginCall call,
+        String initialUrl,
+        String referrer,
+        String sessionId
+    ) {
+        FrameLayout root = getActivity().findViewById(android.R.id.content);
+        if (root == null) {
+            call.reject("无法创建原站播放表面");
+            return;
+        }
+        stopLiveSessionOnUi(null);
+
+        WebView webView = new WebView(getActivity());
+        webView.setBackgroundColor(Color.BLACK);
+        webView.setAlpha(1f);
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setSupportMultipleWindows(false);
+
+        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+
+        JSONArray networkEvents = new JSONArray();
+        AtomicReference<String> pageUrl = new AtomicReference<>(initialUrl);
+        AtomicLong nativeLastHighValueAt = new AtomicLong(0L);
+        String sessionNonce = UUID.randomUUID().toString();
+        String probeScript = buildProbeScript(sessionNonce);
+        LiveProbeQueue liveProbes = new LiveProbeQueue(
+            createProbeClient(settings.getUserAgentString()),
+            nativeLastHighValueAt,
+            event -> emitMediaObservation(sessionId, event)
+        );
+        ScriptHandler scriptHandler = installDocumentStartProbe(webView, probeScript);
+        ServiceWorkerSniffer.install(
+            networkEvents,
+            pageUrl,
+            nativeLastHighValueAt,
+            event -> handleNetworkObservation(event, liveProbes, sessionId)
+        );
+
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                pageUrl.set(url);
+                if (scriptHandler == null) view.evaluateJavascript(probeScript, null);
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                pageUrl.set(url);
+                view.evaluateJavascript(probeScript, null);
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                JSONObject event = recordNetworkEvent(networkEvents, pageUrl.get(), request, nativeLastHighValueAt);
+                handleNetworkObservation(event, liveProbes, sessionId);
+                return null;
+            }
+        });
+
+        // Start off-screen / zero-size until JS syncs to the Reader media slot.
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(1, 1, Gravity.TOP);
+        params.leftMargin = -10000;
+        params.topMargin = 0;
+        webView.setVisibility(View.INVISIBLE);
+        root.addView(webView, params);
+
+        liveSessionId = sessionId;
+        liveWebView = webView;
+        liveHost = root;
+        liveScriptHandler = scriptHandler;
+        liveNetworkEvents = networkEvents;
+        liveProbeQueue = liveProbes;
+        liveEntryUrl = initialUrl;
+        liveReferrer = referrer;
+        liveSuspended = false;
+        liveBlanked = false;
+        liveActive.set(true);
+
+        if (referrer == null) {
+            webView.loadUrl(initialUrl);
+        } else {
+            Map<String, String> navigationHeaders = new HashMap<>();
+            navigationHeaders.put("Referer", referrer);
+            webView.loadUrl(initialUrl, navigationHeaders);
+        }
+        call.resolve();
+    }
+
+    private void applyLiveSessionBoundsOnUi(
+        double cssX,
+        double cssY,
+        double cssW,
+        double cssH,
+        double cssRadius
+    ) {
+        WebView webView = liveWebView;
+        FrameLayout host = liveHost;
+        if (webView == null || host == null) return;
+
+        WebView bridgeWebView = getBridge() != null ? getBridge().getWebView() : null;
+        DisplayMetrics metrics = getActivity().getResources().getDisplayMetrics();
+        float density = metrics.density;
+        int width = Math.max(1, Math.round((float) cssW * density));
+        int height = Math.max(1, Math.round((float) cssH * density));
+        int[] hostLoc = new int[2];
+        host.getLocationInWindow(hostLoc);
+        int left;
+        int top;
+        if (bridgeWebView != null) {
+            int[] bridgeLoc = new int[2];
+            bridgeWebView.getLocationInWindow(bridgeLoc);
+            left = (bridgeLoc[0] - hostLoc[0]) + Math.round((float) cssX * density);
+            top = (bridgeLoc[1] - hostLoc[1]) + Math.round((float) cssY * density);
+        } else {
+            left = Math.round((float) cssX * density) - hostLoc[0];
+            top = Math.round((float) cssY * density) - hostLoc[1];
+        }
+
+        boolean onScreen = cssW >= 8 && cssH >= 8
+            && cssY + cssH > 0
+            && cssY < bridgeWebViewHeightCss(bridgeWebView, density);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(width, height, Gravity.TOP | Gravity.START);
+        params.leftMargin = left;
+        params.topMargin = top;
+        webView.setLayoutParams(params);
+
+        final float radiusPx = (float) cssRadius * density;
+        webView.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radiusPx);
+            }
+        });
+        webView.setClipToOutline(radiusPx > 0.5f);
+
+        if (webView.getVisibility() != View.GONE) {
+            webView.setVisibility(onScreen ? View.VISIBLE : View.INVISIBLE);
+        }
+    }
+
+    private static int bridgeWebViewHeightCss(WebView bridgeWebView, float density) {
+        if (bridgeWebView == null || density <= 0f) return Integer.MAX_VALUE;
+        return Math.round(bridgeWebView.getHeight() / density);
+    }
+
+    private void stopLiveSessionOnUi(String sessionId) {
+        if (!liveActive.get() && liveWebView == null) return;
+        if (sessionId != null
+            && liveSessionId != null
+            && !sessionId.isEmpty()
+            && !sessionId.equals(liveSessionId)) {
+            return;
+        }
+        liveActive.set(false);
+        WebView webView = liveWebView;
+        FrameLayout host = liveHost;
+        ScriptHandler scriptHandler = liveScriptHandler;
+        JSONArray networkEvents = liveNetworkEvents;
+        LiveProbeQueue probes = liveProbeQueue;
+        liveWebView = null;
+        liveHost = null;
+        liveScriptHandler = null;
+        liveNetworkEvents = null;
+        liveProbeQueue = null;
+        liveSessionId = null;
+        liveEntryUrl = null;
+        liveReferrer = null;
+        liveSuspended = false;
+        liveBlanked = false;
+        if (probes != null) {
+            new Thread(probes::closeAndAwait, "newsnook-live-stop").start();
+        }
+        if (webView != null && host != null) {
+            cleanup(webView, host, scriptHandler, networkEvents != null ? networkEvents : new JSONArray());
+        }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
     private void startSniff(
         PluginCall call,
         String initialUrl,
@@ -700,7 +1119,7 @@ public class MediaSnifferPlugin extends Plugin {
             if (finished.get()) return;
             long now = System.currentTimeMillis();
             if (now - startMs >= timeoutMs) {
-                finishSniff(call, webView, root, scriptHandler, networkEvents, pageUrl.get(), finished, sessionNonce, liveProbes);
+                finishSniff(call, webView, root, scriptHandler, networkEvents, initialUrl, finished, sessionNonce, liveProbes);
                 return;
             }
             webView.evaluateJavascript(
@@ -710,11 +1129,11 @@ public class MediaSnifferPlugin extends Plugin {
                     long lastHigh = Math.max(parseJsMillis(value), nativeLastHighValueAt.get());
                     long innerNow = System.currentTimeMillis();
                     if (innerNow - startMs >= timeoutMs) {
-                        finishSniff(call, webView, root, scriptHandler, networkEvents, pageUrl.get(), finished, sessionNonce, liveProbes);
+                        finishSniff(call, webView, root, scriptHandler, networkEvents, initialUrl, finished, sessionNonce, liveProbes);
                         return;
                     }
                     if (innerNow - startMs >= MIN_TIMEOUT_MS && lastHigh > 0 && innerNow - lastHigh >= QUIET_MS) {
-                        finishSniff(call, webView, root, scriptHandler, networkEvents, pageUrl.get(), finished, sessionNonce, liveProbes);
+                        finishSniff(call, webView, root, scriptHandler, networkEvents, initialUrl, finished, sessionNonce, liveProbes);
                         return;
                     }
                     webView.postDelayed(pollHolder[0], POLL_INTERVAL_MS);
@@ -723,7 +1142,7 @@ public class MediaSnifferPlugin extends Plugin {
         };
         webView.postDelayed(pollHolder[0], POLL_INTERVAL_MS);
         webView.postDelayed(
-            () -> finishSniff(call, webView, root, scriptHandler, networkEvents, pageUrl.get(), finished, sessionNonce, liveProbes),
+            () -> finishSniff(call, webView, root, scriptHandler, networkEvents, initialUrl, finished, sessionNonce, liveProbes),
             timeoutMs
         );
 
@@ -844,7 +1263,10 @@ public class MediaSnifferPlugin extends Plugin {
                     }
                 }
                 if (headers.length() > 0) event.put("requestHeaders", headers);
-                if (observationPriority(event) >= 3 && lastHighValueAt != null) {
+                // Quiet-exit only for manifests. Progressive video/audio is still
+                // recorded at priority 3 for retention, but must not end the session
+                // while a preroll may still be playing.
+                if (isManifestHighValue(event) && lastHighValueAt != null) {
                     lastHighValueAt.set(System.currentTimeMillis());
                 }
                 appendPrioritized(events, event);
@@ -856,9 +1278,42 @@ public class MediaSnifferPlugin extends Plugin {
         }
     }
 
+    private static final Set<String> TRACKER_HOST_SUFFIXES = Collections.unmodifiableSet(
+        new HashSet<>(Arrays.asList(
+            "google-analytics.com",
+            "googletagmanager.com",
+            "doubleclick.net",
+            "cloudflareinsights.com",
+            "sentry.io",
+            "hotjar.com",
+            "cnzz.com",
+            "hm.baidu.com"
+        ))
+    );
+
+    private static boolean isTrackerHost(String url) {
+        try {
+            String host = Uri.parse(url).getHost();
+            if (host == null) return false;
+            String lower = host.toLowerCase(Locale.ROOT);
+            if (lower.contains("jsdelivr.net") && url.toLowerCase(Locale.ROOT).contains("disable-devtool")) {
+                return true;
+            }
+            for (String suffix : TRACKER_HOST_SUFFIXES) {
+                if (lower.equals(suffix) || lower.endsWith("." + suffix)) return true;
+            }
+        } catch (RuntimeException ignored) {
+            // malformed URL
+        }
+        return false;
+    }
+
     private static boolean isImmediatelyPlayable(JSONObject event) {
         if (event == null) return false;
         String mime = event.optString("mimeType", "").toLowerCase(Locale.ROOT);
+        String url = event.optString("url", "");
+        String path = url.split("[?#]", 2)[0].toLowerCase(Locale.ROOT);
+        if (mime.startsWith("video/") && path.matches(".*\\.(png|jpe?g|gif|webp|avif|svg|ico)$")) return false;
         return mime.startsWith("video/")
             || mime.startsWith("audio/")
             || mime.contains("mpegurl")
@@ -871,12 +1326,17 @@ public class MediaSnifferPlugin extends Plugin {
      * hit, and the final result only waits for a small bounded drain.
      */
     private static final class LiveProbeQueue {
-        private static final long DRAIN_MS = 650L;
+        // MediaProbe has a three-second call timeout; a shorter drain drops
+        // late Range/HEAD classifications before they reach the graph.
+        private static final long DRAIN_MS = 3500L;
 
         private final OkHttpClient client;
         private final AtomicLong lastHighValueAt;
         private final ObservationEmitter emitter;
-        private final ExecutorService executor = Executors.newFixedThreadPool(4);
+        // Probe candidates are independent. Eight workers let the bounded
+        // session queue converge within the final drain without serializing
+        // extensionless requests behind one slow endpoint.
+        private final ExecutorService executor = Executors.newFixedThreadPool(8);
         private final Set<String> seen = ConcurrentHashMap.newKeySet();
         private final AtomicInteger scheduled = new AtomicInteger(0);
         private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -897,6 +1357,7 @@ public class MediaSnifferPlugin extends Plugin {
             String url = event.optString("url", "");
             if (!"GET".equalsIgnoreCase(method)
                 || !isAllowedPageUrl(url)
+                || isTrackerHost(url)
                 || hasMediaExtension(url)
                 || !seen.add(url)) return;
             int count = scheduled.incrementAndGet();
@@ -916,7 +1377,9 @@ public class MediaSnifferPlugin extends Plugin {
                             if (result.mimeType.startsWith("audio/")) event.put("mediaKind", "audio");
                             else if (result.mimeType.startsWith("video/")) event.put("mediaKind", "video");
                         }
-                        lastHighValueAt.set(System.currentTimeMillis());
+                        if (isManifestHighValue(event)) {
+                            lastHighValueAt.set(System.currentTimeMillis());
+                        }
                         emitter.emit(event);
                     } catch (JSONException | RuntimeException ignored) {
                         // One URL must not block or cancel the other request tasks.
@@ -976,6 +1439,15 @@ public class MediaSnifferPlugin extends Plugin {
         if (url.matches(".*\\.(m4s|ts)(?:[?#].*)?$")) return 1;
         if (url.matches(".*\\.(js|css|html?|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf)(?:[?#].*)?$")) return 0;
         return 2;
+    }
+
+    private static boolean isManifestHighValue(JSONObject event) {
+        if (event == null) return false;
+        String mime = event.optString("mimeType", "").toLowerCase(Locale.ROOT);
+        String url = event.optString("url", "").toLowerCase(Locale.ROOT);
+        return mime.contains("mpegurl")
+            || mime.contains("dash+xml")
+            || url.matches(".*\\.(m3u8|mpd)(?:[?#].*)?$");
     }
 
     private static boolean isSkippableStaticAsset(String url) {
@@ -1079,7 +1551,18 @@ public class MediaSnifferPlugin extends Plugin {
             if (!eventNonce.isEmpty() && !eventNonce.equals(sessionNonce)) continue;
             if (event.optBoolean("fromIframe", false)) {
                 String url = event.optString("url", "");
-                if (url.isEmpty() || !networkUrls.contains(url)) continue;
+                String frameUrl = event.optString("pageUrl", "");
+                boolean loadedFrame = !frameUrl.isEmpty() && networkUrls.contains(frameUrl);
+                String source = event.optString("source", "");
+                String inferred = inferredMimeType(url);
+                boolean strongManifest = inferred != null
+                    && (inferred.contains("mpegurl") || inferred.contains("dash+xml"));
+                boolean staticMedia = "static".equals(source) && inferred != null;
+                // A player may publish its manifest in inline configuration / DOM
+                // and only request it after preroll. Trust HLS/DASH when the iframe
+                // document itself was loaded; progressive still needs static config
+                // or a real network hit.
+                if (url.isEmpty() || (!networkUrls.contains(url) && !(loadedFrame && (strongManifest || staticMedia)))) continue;
             }
             event.remove("sessionNonce");
             trusted.put(event);

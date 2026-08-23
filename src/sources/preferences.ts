@@ -56,6 +56,32 @@ export interface TypographyPrefs {
   firstLineIndent: boolean
 }
 
+export const PRESTORE_PER_SOURCE_OPTIONS = [5, 10, 20, 50, 100] as const
+
+export interface PrestorePrefs {
+  enabled: boolean
+  perSourceLimit: number
+}
+
+export const DEFAULT_PRESTORE_PREFS: PrestorePrefs = {
+  enabled: false,
+  perSourceLimit: 10,
+}
+
+function normalizePrestoreLimit(value: unknown): number {
+  return typeof value === 'number' && PRESTORE_PER_SOURCE_OPTIONS.some((option) => option === value)
+    ? value
+    : DEFAULT_PRESTORE_PREFS.perSourceLimit
+}
+
+function normalizePrestorePrefs(raw: unknown): PrestorePrefs {
+  const input = (raw ?? {}) as Partial<PrestorePrefs>
+  return {
+    enabled: input.enabled === true,
+    perSourceLimit: normalizePrestoreLimit(input.perSourceLimit),
+  }
+}
+
 export interface Preferences {
   /** 分类展示顺序；未列出的分类按注册表顺序排在后面 */
   categoryOrder: CategoryId[]
@@ -85,6 +111,8 @@ export interface Preferences {
   einkMode: boolean
   /** Android：仅 Wi-Fi 下自动加载阅读页图片和视频；默认 false */
   wifiOnlyAutoLoadMedia: boolean
+  /** 当前预设的正文预存策略；关闭仅停止更新，不主动删除已预存正文 */
+  prestore: PrestorePrefs
 }
 
 export const DEFAULT_TYPOGRAPHY: TypographyPrefs = {
@@ -143,6 +171,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   autoRefreshOnCategorySwitch: true,
   einkMode: false,
   wifiOnlyAutoLoadMedia: false,
+  prestore: DEFAULT_PRESTORE_PREFS,
 }
 
 /** 综合分类跟随「频道」页启用状态，不参与逐分类信源编辑 */
@@ -230,7 +259,7 @@ export function normalizePreferences(raw: unknown): Preferences {
           ? (item.group as SourceGroup)
           : 'custom'
 
-      customSources.push({
+      const source: NewsSource = {
         id: rawId,
         name: rawName,
         label: rawLabel || rawName.slice(0, 4),
@@ -241,7 +270,11 @@ export function normalizePreferences(raw: unknown): Preferences {
         enabled: typeof item.enabled === 'boolean' ? item.enabled : true,
         isCustom: true,
         createdAt: typeof item.createdAt === 'number' ? item.createdAt : Date.now(),
-      })
+      }
+      if (item.frameworkHint && typeof item.frameworkHint === 'object') {
+        source.frameworkHint = item.frameworkHint
+      }
+      customSources.push(source)
     })
   }
 
@@ -318,6 +351,7 @@ export function normalizePreferences(raw: unknown): Preferences {
     einkMode: typeof input.einkMode === 'boolean' ? input.einkMode : false,
     wifiOnlyAutoLoadMedia:
       typeof input.wifiOnlyAutoLoadMedia === 'boolean' ? input.wifiOnlyAutoLoadMedia : false,
+    prestore: normalizePrestorePrefs(input.prestore),
     typography: {
       fontScale: clamp(typography.fontScale, DEFAULT_TYPOGRAPHY.fontScale, 0.8, 1.4),
       lineHeight: clamp(typography.lineHeight, DEFAULT_TYPOGRAPHY.lineHeight, 1.4, 2.4),
@@ -670,6 +704,7 @@ export function addCustomSource(
     siteUrl?: string
     group?: SourceGroup
     kind?: NewsSource['kind']
+    frameworkHint?: import('../features/frameworkDetect/types').FrameworkHint
   },
   targetCategoryId?: CategoryId,
 ): { nextPrefs: Preferences; newSourceId: string } {
@@ -693,6 +728,7 @@ export function addCustomSource(
     enabled: true,
     isCustom: true,
     createdAt: Date.now(),
+    ...(draft.frameworkHint ? { frameworkHint: draft.frameworkHint } : {}),
   }
 
   let nextSources: NewsSource[]
@@ -936,6 +972,17 @@ export function setWifiOnlyAutoLoadMedia(prefs: Preferences, enabled: boolean): 
   return prefs.wifiOnlyAutoLoadMedia === enabled
     ? prefs
     : { ...prefs, wifiOnlyAutoLoadMedia: enabled }
+}
+
+export function setPrestoreEnabled(prefs: Preferences, enabled: boolean): Preferences {
+  if (prefs.prestore.enabled === enabled) return prefs
+  return { ...prefs, prestore: { ...prefs.prestore, enabled } }
+}
+
+export function setPrestorePerSourceLimit(prefs: Preferences, perSourceLimit: number): Preferences {
+  const normalized = normalizePrestoreLimit(perSourceLimit)
+  if (prefs.prestore.perSourceLimit === normalized) return prefs
+  return { ...prefs, prestore: { ...prefs.prestore, perSourceLimit: normalized } }
 }
 
 export function updateTypography(

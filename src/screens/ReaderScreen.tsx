@@ -11,12 +11,19 @@ import { InkVideoPlayer } from '../components/InkVideoPlayer'
 import { InlineArticleAudio } from '../components/InlineArticleAudio'
 import { InlineArticleVideos, VideoSniffPlaceholder } from '../components/InlineArticleVideos'
 import { InlineYoutubeEmbeds } from '../components/InlineYoutubeEmbeds'
+import {
+  OriginPlayerSurface,
+  type OriginPlayerCloseHandle,
+} from '../components/OriginPlayerSurface'
+import { shouldUseOriginPlayerSurface } from '../features/mediaSniffer/originPlayerGate'
+import { loadPrestoredBody } from '../features/prestore/store'
 import { loadCachedBody, saveCachedBody } from '../lib/bodyCache'
 import { addVolumePageTurnListener, setVolumePageTurnEnabled } from '../lib/volumePageTurn'
 import { useEdgeSwipeBack } from '../hooks/useEdgeSwipeBack'
 import { useNetworkStatus } from '../hooks/useNetworkStatus'
 import { usePagedReader } from '../hooks/usePagedReader'
 import { useProgressiveImages } from '../hooks/useProgressiveImages'
+import { useReaderFontPinch } from '../hooks/useReaderFontPinch'
 import { useReducedMotion } from '../hooks/useReducedMotion'
 import { revokeBlobUrl } from '../features/proxy/hydrateImages'
 import { deferMediaInHtml, DEFERRED_SRC_ATTR, type DeferredHostPhase } from '../lib/deferReaderMedia'
@@ -40,7 +47,9 @@ import { CommentsDrawer } from '../features/comments/components/CommentsDrawer'
 import { AiDigestSheet } from '../features/ai/components/AiDigestSheet'
 import { isAiConfigured } from '../features/ai/config'
 import type { AiPrefs } from '../features/ai/types'
+import { articleFromRelatedLink } from '../features/catalogEngine/toArticles'
 import type { NewsSource } from '../sources/registry'
+import type { InkVideoPlayerFullscreenHandle } from '../components/InkVideoPlayer'
 
 interface Props {
   article: Article
@@ -63,6 +72,8 @@ interface Props {
   onTypographyChange?: (patch: Partial<TypographyPrefs>) => void
   /** 墨水屏菜单「设置」：打开应用设置并保留返回阅读 */
   onOpenSettings?: () => void
+  /** 详情页相关卡片：站内打开，不跳出阅读器 */
+  onOpenRelated?: (article: Article) => void
   /** Android：仅 Wi-Fi 自动加载阅读页媒体 */
   wifiOnlyAutoLoadMedia?: boolean
 }
@@ -85,6 +96,7 @@ export function ReaderScreen({
   fontScale = 1,
   onTypographyChange,
   onOpenSettings,
+  onOpenRelated,
   wifiOnlyAutoLoadMedia = false,
 }: Props) {
   const reduced = useReducedMotion()
@@ -94,10 +106,17 @@ export function ReaderScreen({
   const proseRef = useRef<HTMLDivElement>(null)
   const contentMeasureRef = useRef<HTMLDivElement>(null)
   const prevEinkRef = useRef(einkMode)
+  const videoFullscreenRef = useRef<InkVideoPlayerFullscreenHandle | null>(null)
+  const originPlayerCloseRef = useRef<OriginPlayerCloseHandle | null>(null)
+  const useOriginSurface = shouldUseOriginPlayerSurface({
+    sourceId: article.sourceId,
+    contentType: article.contentType,
+  })
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [html, setHtml] = useState('')
   const [bodySource, setBodySource] = useState<BodySource | null>(null)
   const [resolvedOriginUrl, setResolvedOriginUrl] = useState<string | undefined>()
+  const [resolvedTitle, setResolvedTitle] = useState<string | undefined>()
   const [error, setError] = useState<string | null>(null)
   const [fromCache, setFromCache] = useState(false)
   const [retryToken, setRetryToken] = useState(0)
@@ -143,6 +162,34 @@ export function ReaderScreen({
   const lastScrollTopRef = useRef(0)
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scrollRafRef = useRef(0)
+
+  const pinchEnabled =
+    !einkMode && loadState === 'ready' && !lightbox && !commentsOpen
+
+  const { hudLabel } = useReaderFontPinch({
+    targetRef: rootRef,
+    fontScale,
+    enabled: pinchEnabled,
+    onCommit: (next) => onTypographyChange?.({ fontScale: next }),
+  })
+
+  // 返回键：视频全屏时先退出全屏（回到文章页），而不是直接关闭文章
+  useEffect(() => {
+    if (!overlayCloserRef) return
+    const prev = overlayCloserRef.current
+    overlayCloserRef.current = () => {
+      if (originPlayerCloseRef.current?.closeCustom()) return true
+      const handle = videoFullscreenRef.current
+      if (handle?.immersive) {
+        handle.exit()
+        return true
+      }
+      return prev ? prev() : false
+    }
+    return () => {
+      overlayCloserRef.current = prev
+    }
+  }, [overlayCloserRef])
 
   useEffect(() => {
     if (!overlayCloserRef) return
@@ -278,8 +325,31 @@ export function ReaderScreen({
     if (!root || loadState !== 'ready') return
 
     const onClick = (event: MouseEvent) => {
-      if (einkMode) return
       const target = event.target
+      if (!(target instanceof Element)) return
+      const relatedLink = target.closest('a[data-reader-role="related-item"]')
+      if (relatedLink instanceof HTMLAnchorElement) {
+        const href = relatedLink.href
+        if (href && onOpenRelated) {
+          event.preventDefault()
+          event.stopPropagation()
+          const title =
+            relatedLink.getAttribute('data-related-title') ||
+            relatedLink.textContent?.replace(/\s+/g, ' ').trim() ||
+            href
+          const img = relatedLink.querySelector('img')
+          onOpenRelated(
+            articleFromRelatedLink(
+              article,
+              href,
+              title,
+              img?.currentSrc || img?.getAttribute('src') || undefined,
+            ),
+          )
+        }
+        return
+      }
+      if (einkMode) return
       if (!(target instanceof HTMLImageElement)) return
       if (target.classList.contains('async-img-failed')) return
       if (target.getAttribute(DEFERRED_SRC_ATTR) && !target.getAttribute('src')) return
@@ -298,7 +368,7 @@ export function ReaderScreen({
 
     root.addEventListener('click', onClick)
     return () => root.removeEventListener('click', onClick)
-  }, [einkMode, html, loadState, showTranslation, translated])
+  }, [article, einkMode, html, loadState, onOpenRelated, showTranslation, translated])
 
   useEffect(() => {
     setUnlockedMediaUrls([])
@@ -368,46 +438,69 @@ export function ReaderScreen({
     setHtml('')
     setBodySource(null)
     setResolvedOriginUrl(undefined)
+    setResolvedTitle(undefined)
     setFromCache(false)
-    resolveArticleBody(
-      retryToken > 0 && article.videoUrl
-        ? { ...article, videoUrl: undefined }
-        : article,
-      controller.signal,
-      customSources,
-      (resolved) => {
+
+    const loadFromNetwork = () => {
+      void resolveArticleBody(
+        retryToken > 0 && article.videoUrl
+          ? { ...article, videoUrl: undefined }
+          : article,
+        controller.signal,
+        customSources,
+        (resolved) => {
+          if (controller.signal.aborted) return
+          // 正文与媒体嗅探分开：先显示抽取结果，播放器地址稍后增量补上。
+          setHtml(resolved.contentHtml)
+          setResolvedTitle(resolved.title)
+          if (resolved.bodySource !== 'video') {
+            const cached = saveCachedBody(article, {
+              html: resolved.contentHtml,
+              bodySource: resolved.bodySource,
+            })
+            if (cached) onCacheChange()
+          }
+        },
+      )
+        .then((resolved) => {
+          if (controller.signal.aborted) return
+          setHtml(resolved.contentHtml)
+          setBodySource(resolved.bodySource)
+          setResolvedOriginUrl(resolved.resolvedOriginUrl)
+          setResolvedTitle(resolved.title)
+          setLoadState('ready')
+          // 视频稿正文只是占位文案，缓存没有意义
+          if (resolved.bodySource !== 'video') {
+            const cached = saveCachedBody(article, {
+              html: resolved.contentHtml,
+              bodySource: resolved.bodySource,
+            })
+            if (cached) onCacheChange()
+          }
+        })
+        .catch((err: unknown) => {
+          if (controller.signal.aborted) return
+          setError(err instanceof Error ? err.message : '正文加载失败')
+          setLoadState('error')
+        })
+    }
+
+    // 普通正文热缓存优先保持同步首屏；未命中时再读持久预存，最后才联网。
+    if (retryToken === 0 && article.contentType !== 'video') {
+      void loadPrestoredBody(article.id).then((prestored) => {
         if (controller.signal.aborted) return
-        // 正文与媒体嗅探分开：先显示抽取结果，播放器地址稍后增量补上。
-        setHtml(resolved.contentHtml)
-        if (resolved.bodySource !== 'video') {
-          const cached = saveCachedBody(article, {
-            html: resolved.contentHtml,
-            bodySource: resolved.bodySource,
-          })
-          if (cached) onCacheChange()
+        if (prestored) {
+          setHtml(prestored.html)
+          setBodySource(prestored.bodySource)
+          setFromCache(true)
+          setLoadState('ready')
+          return
         }
-      },
-    )
-      .then((resolved) => {
-        if (controller.signal.aborted) return
-        setHtml(resolved.contentHtml)
-        setBodySource(resolved.bodySource)
-        setResolvedOriginUrl(resolved.resolvedOriginUrl)
-        setLoadState('ready')
-        // 视频稿正文只是占位文案，缓存没有意义
-        if (resolved.bodySource !== 'video') {
-          const cached = saveCachedBody(article, {
-            html: resolved.contentHtml,
-            bodySource: resolved.bodySource,
-          })
-          if (cached) onCacheChange()
-        }
+        loadFromNetwork()
       })
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return
-        setError(err instanceof Error ? err.message : '正文加载失败')
-        setLoadState('error')
-      })
+    } else {
+      loadFromNetwork()
+    }
 
     return () => controller.abort()
   }, [article, customSources, onCacheChange, retryToken])
@@ -478,7 +571,10 @@ export function ReaderScreen({
   const comparing = Boolean(
     showTranslation && translated && translationPrefs.displayMode === 'compare',
   )
-  const displayedTitle = showTranslation && translated && !comparing ? translated.title : article.title
+  const displayedTitle =
+    showTranslation && translated && !comparing
+      ? translated.title
+      : resolvedTitle || article.title
 
   const paged = usePagedReader({
     enabled: einkMode,
@@ -804,12 +900,24 @@ export function ReaderScreen({
 
   return (
     <div
-      className="absolute inset-0 z-30 flex flex-col pt-[var(--sat)]"
+      className="absolute inset-0 z-30 flex flex-col"
       style={{
+        paddingTop: 'var(--sat)',
+        paddingBottom: 'var(--sab)',
         animation: reduced ? undefined : 'reader-in 360ms var(--ease-ink) both',
       }}
     >
       <style>{`@keyframes reader-in { from { opacity: 0; transform: translateY(24px) } to { opacity: 1; transform: none } }`}</style>
+
+      {hudLabel && (
+        <div
+          className="pointer-events-none absolute left-1/2 top-[40%] z-30 -translate-x-1/2 rounded-full border border-haze bg-ink/92 px-3.5 py-1.5 font-mono text-[12px] text-paper shadow-lg backdrop-blur-md"
+          role="status"
+          aria-live="polite"
+        >
+          {hudLabel}
+        </div>
+      )}
 
       <div
         ref={shellRef}
@@ -1057,13 +1165,24 @@ export function ReaderScreen({
               </div>
             )}
 
-            {article.contentType === 'video' && !article.videoUrl && loadState === 'loading' && (
+            {useOriginSurface && (resolvedOriginUrl || article.originUrl) && (
+              <OriginPlayerSurface
+                pageUrl={resolvedOriginUrl || article.originUrl!}
+                referrer={resolvedOriginUrl || article.originUrl}
+                title={article.title}
+                poster={article.image}
+                openOriginal={() => void openOriginal()}
+                closeHandleRef={originPlayerCloseRef}
+              />
+            )}
+
+            {!useOriginSurface && article.contentType === 'video' && !article.videoUrl && loadState === 'loading' && (
               <div data-reader-block className="page-x mt-5">
                 <VideoSniffPlaceholder state="sniffing" poster={article.image} />
               </div>
             )}
 
-            {article.contentType === 'video' && article.videoUrl && loadState === 'ready' && !/<video\b/i.test(displayedHtml) && (
+            {!useOriginSurface && article.contentType === 'video' && article.videoUrl && loadState === 'ready' && !/<video\b/i.test(displayedHtml) && (
               <div data-reader-block className="page-x mt-5">
                 <InkVideoPlayer
                   src={article.videoUrl}
@@ -1100,7 +1219,7 @@ export function ReaderScreen({
               </div>
             )}
 
-            <div className="page-x pt-6 pb-[max(var(--sab),40px)]">
+            <div className="page-x pt-6" style={{ paddingBottom: '40px' }}>
               {loadState === 'loading' && <ReaderSkeleton />}
 
               {loadState === 'error' && (
@@ -1155,6 +1274,7 @@ export function ReaderScreen({
                     onRefreshSource={() => setRetryToken((value) => value + 1)}
                     deferLoad={!autoLoadMedia}
                     onUnlocked={onUnlockedMedia}
+                    fullscreenHandleRef={videoFullscreenRef}
                   />
                   <InlineArticleAudio
                     rootRef={proseRef}
@@ -1173,6 +1293,7 @@ export function ReaderScreen({
                     deferLoad={!autoLoadMedia}
                     unlockedUrls={unlockedSet}
                     onUnlocked={onUnlockedMedia}
+                    fullscreenHandleRef={videoFullscreenRef}
                   />
                 </>
               )}
@@ -1228,7 +1349,7 @@ export function ReaderScreen({
       {einkMode && loadState === 'ready' && !einkMenuOpen && (
         <div
           data-surface="reader-chrome"
-          className="shrink-0 border-t border-haze/40 bg-ink pb-[max(var(--sab),8px)] pt-1.5"
+          className={`shrink-0 border-t border-haze/40 bg-ink pt-1.5 pb-4`}
         >
           <p className="text-center font-mono text-[11px] tracking-[0.12em] text-paper-faint">
             {paged.pageIndex + 1} / {Math.max(paged.pages.length, 1)}
@@ -1262,7 +1383,7 @@ export function ReaderScreen({
       {/* 底部右下角悬浮跟贴胶囊（随时一触即达） */}
       {canComment && !commentsOpen && !einkMode && (
         <div
-          className={`fixed bottom-[max(var(--sab),20px)] right-4 z-40 transition-all duration-300 pointer-events-auto ${
+          className={`fixed right-4 z-40 transition-all duration-300 pointer-events-auto safe-bottom-20 ${
             (einkMode ? chromeVisible : pillVisible)
               ? 'opacity-100 translate-y-0 scale-100'
               : 'opacity-0 translate-y-6 scale-90 pointer-events-none'

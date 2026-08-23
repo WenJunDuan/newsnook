@@ -165,7 +165,10 @@ export function CommentsDrawer({ open, onClose, article }: Props) {
         <style>{`@keyframes drawer-slide-in { from { opacity: 0.6; transform: translateX(20px) } to { opacity: 1; transform: none } }`}</style>
 
         {/* 顶部标题栏 */}
-        <div className="flex shrink-0 items-center justify-between border-b border-haze bg-ink px-4 py-3.5 pt-[calc(0.875rem+var(--sat,0px))]">
+        <div
+          className="flex shrink-0 items-center justify-between border-b border-haze bg-ink px-4 py-3.5"
+          style={{ paddingTop: 'calc(0.875rem + var(--sat, 0px))' }}
+        >
           <div className="flex items-center gap-2.5 min-w-0">
             <MessageSquare size={18} className="text-cinnabar shrink-0" />
             <div className="min-w-0">
@@ -227,7 +230,7 @@ export function CommentsDrawer({ open, onClose, article }: Props) {
         <div
           ref={scrollContainerRef}
           onScroll={handleListScroll}
-          className="flex-1 overflow-y-auto bg-ink px-4 py-2 pb-[max(var(--sab,0px),24px)]"
+          className="flex-1 overflow-y-auto bg-ink px-4 py-2 safe-pb-24"
         >
           {loading && comments.length === 0 && (
             <div className="flex flex-col items-center justify-center py-20 text-paper-faint">

@@ -16,6 +16,7 @@ import {
   setBodyPinned,
   syncBodyPins,
 } from './lib/bodyCache'
+import { sortArticles } from './lib/feedPagination'
 import { resolveArticleBody } from './lib/resolveBody'
 import {
   listCacheStats,
@@ -34,6 +35,7 @@ import { AiPicksScreen } from './screens/AiPicksScreen'
 import { ChannelsScreen } from './screens/ChannelsScreen'
 import { FeedScreen } from './screens/FeedScreen'
 import { MeScreen } from './screens/MeScreen'
+import { SiteScreen } from './screens/SiteScreen'
 import { AboutScreen } from './screens/settings/AboutScreen'
 import { ChangelogScreen } from './screens/settings/ChangelogScreen'
 import { OpenSourceScreen } from './screens/settings/OpenSourceScreen'
@@ -62,6 +64,7 @@ import {
 import { proxyModeLabel } from './features/proxy/config'
 import { UpdateDialog } from './features/appUpdate/UpdateDialog'
 import { useAppUpdate } from './features/appUpdate/useAppUpdate'
+import { usePrestore } from './features/prestore/usePrestore'
 import {
   translationDisplayModeLabel,
   translationLanguageLabel,
@@ -83,6 +86,8 @@ import {
   setAutoRefreshOnCategorySwitch,
   setCategoryOrder,
   setEinkMode,
+  setPrestoreEnabled,
+  setPrestorePerSourceLimit,
   setWifiOnlyAutoLoadMedia,
   selectThemeScheme,
   setCustomSchemeColors,
@@ -413,6 +418,22 @@ export default function App() {
     loadMore,
   } = useFeeds(fetchIds, notifyCacheChange, prefs.customSources)
 
+  const prestore = usePrestore({
+    prefs,
+    enabledIds,
+    presetId: presets.state.activePresetId,
+    // 首页刷新、加载历史和主动阅读优先，自动预存不与前台关键路径争抢网络/CPU。
+    suspend: refreshing || loadingMore || Boolean(reading),
+  })
+
+  // 预存清单自身携带文章元数据，离线时无需依赖 localStorage 列表缓存。
+  // 当前在线/列表缓存版本覆盖同 ID 的旧元数据，随后统一按发布时间排序。
+  const availableArticles = useMemo(() => {
+    const byId = new Map(prestore.snapshot.articles.map((article) => [article.id, article]))
+    fetchedArticles.forEach((article) => byId.set(article.id, article))
+    return sortArticles([...byId.values()])
+  }, [fetchedArticles, prestore.snapshot.articles])
+
   const runRefresh = useCallback(() => refresh(listScopeIds), [refresh, listScopeIds])
 
   // 进入分类 / 信源集合变化时，预拉该分类已开启的源（受 autoRefreshOnCategorySwitch 开关控制）
@@ -442,16 +463,16 @@ export default function App() {
 
   const categorySourceSet = useMemo(() => new Set(categorySourceIds), [categorySourceIds])
   const articles = useMemo(
-    () => fetchedArticles.filter((item) => categorySourceSet.has(item.sourceId)),
-    [fetchedArticles, categorySourceSet],
+    () => availableArticles.filter((item) => categorySourceSet.has(item.sourceId)),
+    [availableArticles, categorySourceSet],
   )
 
   const articlesForCategory = useCallback(
     (id: CategoryId) => {
       const ids = new Set(sourceIdsForCategoryWithPrefs(id, prefs, enabledIds))
-      return fetchedArticles.filter((item) => ids.has(item.sourceId))
+      return availableArticles.filter((item) => ids.has(item.sourceId))
     },
-    [fetchedArticles, prefs, enabledIds],
+    [availableArticles, prefs, enabledIds],
   )
 
   const handleCategoryChange = useCallback((newId: CategoryId) => {
@@ -527,9 +548,9 @@ export default function App() {
   const focusArticles = useMemo(
     () =>
       focusSource
-        ? fetchedArticles.filter((item) => item.sourceId === focusSource.id)
+        ? availableArticles.filter((item) => item.sourceId === focusSource.id)
         : [],
-    [fetchedArticles, focusSource],
+    [availableArticles, focusSource],
   )
 
   const activeCategory = categories.find((item) => item.id === categoryId)
@@ -554,12 +575,19 @@ export default function App() {
     ]
   }, [presets.builtins, presets.state])
 
+  const frameworkSiteCount = useMemo(
+    () => (prefs.customSources ?? []).filter((s) => s.frameworkHint && s.kind === 'web-catalog').length,
+    [prefs.customSources],
+  )
+
   const presetSwitcherConfig = useMemo(() => ({
     activeName: presets.activePreset?.name ?? '场景预设',
     items: presetSwitcherItems,
     onSelect: (id: string) => presets.applyPreset(id),
     onManage: () => setSettingsRoute({ name: 'presets' }),
-  }), [presets, presetSwitcherItems])
+    onSites: frameworkSiteCount > 0 ? () => setTab('sites') : undefined,
+    siteCount: frameworkSiteCount,
+  }), [presets, presetSwitcherItems, frameworkSiteCount])
 
   const cachedHistory = useMemo(
     () =>
@@ -579,15 +607,15 @@ export default function App() {
   // 缓存模块显式刷新快照，避免返回设置页后显示旧统计。
   const storageSummary = useMemo(() => {
     if (tab !== 'me') return ''
-    const bytes = cacheSnapshot.bodies.bytes + cacheSnapshot.lists.bytes
+    const bytes = cacheSnapshot.bodies.bytes + cacheSnapshot.lists.bytes + prestore.snapshot.stats.bytes
     const size =
       bytes === 0
         ? '0 KB'
         : bytes < 1024 * 1024
         ? `${Math.max(1, Math.round(bytes / 1024))} KB`
         : `${(bytes / 1024 / 1024).toFixed(1)} MB`
-    return `${cacheSnapshot.bodies.count} 篇正文离线可读 · 占用 ${size}`
-  }, [cacheSnapshot, tab])
+    return `${prestore.snapshot.stats.articleCount} 篇预存 · ${cacheSnapshot.bodies.count} 篇阅读缓存 · 占用 ${size}`
+  }, [cacheSnapshot, prestore.snapshot.stats.articleCount, prestore.snapshot.stats.bytes, tab])
 
   const typographySummary = useMemo(() => {
     const family = FONT_FAMILY_OPTIONS.find((item) => item.id === prefs.typography.fontFamily)
@@ -670,6 +698,22 @@ export default function App() {
         <StorageScreen
           laterCount={later.length}
           usage={{ bodies: cacheSnapshot.bodies, lists: cacheSnapshot.lists }}
+          prestore={{
+            enabled: prefs.prestore.enabled,
+            perSourceLimit: prefs.prestore.perSourceLimit,
+            sourceCount: prestore.sourceCount,
+            presetName: presets.activePreset?.name ?? '当前预设',
+            stats: prestore.snapshot.stats,
+            syncing: prestore.syncing,
+            progress: prestore.progress,
+            error: prestore.error,
+            onEnabledChange: (enabled) =>
+              update((prev) => setPrestoreEnabled(prev, enabled)),
+            onPerSourceLimitChange: (limit) =>
+              update((prev) => setPrestorePerSourceLimit(prev, limit)),
+            onSync: prestore.syncNow,
+            onClear: prestore.clear,
+          }}
           onCacheChange={notifyCacheChange}
           onBack={() => setSettingsRoute(null)}
         />
@@ -938,6 +982,7 @@ export default function App() {
           lastUpdated={lastUpdated}
           readIds={readIds}
           laterIds={laterIds}
+          prestoredIds={prestore.articleIds}
           showLead={false}
           offline={offline}
           translationPrefs={prefs.translation}
@@ -946,6 +991,8 @@ export default function App() {
           onLoadMore={() => void loadMore([focusSource.id])}
           onOpen={openArticle}
           onBack={closeSourceFeed}
+          searchTemplate={focusSource.frameworkHint?.searchTemplate}
+          frameworkCategories={focusSource.frameworkHint?.categories}
         />
       )
     }
@@ -987,6 +1034,20 @@ export default function App() {
       )
     }
 
+    if (tab === 'sites') {
+      const frameworkSites = (prefs.customSources ?? [])
+        .filter((s) => s.frameworkHint && s.kind === 'web-catalog')
+        .map((s) => ({ source: s, hint: s.frameworkHint! }))
+      return (
+        <SiteScreen
+          sites={frameworkSites}
+          readIds={readIds}
+          onOpen={openArticle}
+          onBack={() => setTab('today')}
+        />
+      )
+    }
+
     const activeFilterSource = categoryFilterSourceId
       ? findSource(categoryFilterSourceId, prefs.customSources)
       : null
@@ -1011,6 +1072,7 @@ export default function App() {
         lastUpdated={lastUpdated}
         readIds={readIds}
         laterIds={laterIds}
+        prestoredIds={prestore.articleIds}
         showLead
         offline={offline}
         categories={categories}
@@ -1033,6 +1095,8 @@ export default function App() {
         onOpen={openArticle}
         onBrandTap={onBrandTap}
         pullRefreshSeq={todayPullRefreshSeq}
+        searchTemplate={activeFilterSource?.frameworkHint?.searchTemplate}
+        frameworkCategories={activeFilterSource?.frameworkHint?.categories}
       />
     )
   }
@@ -1065,6 +1129,8 @@ export default function App() {
             items: presetSwitcherItems,
             onSelect: (id) => presets.applyPreset(id),
             onManage: () => setSettingsRoute({ name: 'presets' }),
+            onSites: frameworkSiteCount > 0 ? () => setTab('sites') : undefined,
+            siteCount: frameworkSiteCount,
           }}
           onNavigateHome={() => {
             setTab('today')
@@ -1113,7 +1179,8 @@ export default function App() {
             <div
               role="status"
               aria-label="正在打开文章"
-              className="absolute inset-0 z-30 bg-ink pt-[var(--sat)]"
+              className="absolute inset-0 z-30 bg-ink"
+              style={{ paddingTop: 'var(--sat)' }}
             />
           }
         >
@@ -1143,6 +1210,7 @@ export default function App() {
               setSettingsRoute(null)
               setTab('me')
             }}
+            onOpenRelated={openArticle}
           />
         </Suspense>
       )}

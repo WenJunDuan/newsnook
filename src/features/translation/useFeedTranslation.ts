@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { log } from '../../lib/logger'
 import { cleanOpenAiTranslation } from './openai'
 import { normalizeChineseVariant } from './chineseVariant'
 import {
@@ -174,7 +175,7 @@ export function useFeedTranslation(
             }
           } catch (chunkError) {
             if (controller.signal.aborted) break
-            console.warn('[useFeedTranslation] Failed to translate chunk:', chunkError)
+            log.translation.warn('Failed to translate chunk:', chunkError)
             for (const art of chunk) {
               failedIdsRef.current.add(art.id)
             }

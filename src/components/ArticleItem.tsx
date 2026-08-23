@@ -1,5 +1,5 @@
 import { memo, useState } from 'react'
-import { BookmarkCheck } from 'lucide-react'
+import { BookmarkCheck, Cloud } from 'lucide-react'
 
 import { InkImage } from './InkImage'
 import { articleCoverUrl } from '../lib/articleAudio'
@@ -11,6 +11,8 @@ interface RowProps {
   article: Article
   read: boolean
   saved: boolean
+  /** 正文已进入持久预存窗口；与普通阅读缓存/稍后读状态分离 */
+  prestored?: boolean
   translated?: { title: string; summary?: string }
   displayMode?: 'replace' | 'compare'
   onOpen: (article: Article) => void
@@ -25,6 +27,7 @@ export const ArticleRow = memo(function ArticleRow({
   article,
   read,
   saved,
+  prestored = false,
   translated,
   displayMode = 'replace',
   onOpen,
@@ -116,6 +119,14 @@ export const ArticleRow = memo(function ArticleRow({
               <span aria-hidden className="text-paper-faint/50">·</span>
               <span>{articleRelativeTime(article)}</span>
               {saved && <BookmarkCheck size={11} strokeWidth={1.8} className="text-cinnabar ml-0.5" />}
+              {prestored && (
+                <Cloud
+                  size={11}
+                  strokeWidth={1.35}
+                  className="ml-0.5 text-paper-faint/70"
+                  aria-label="已预存，可离线阅读"
+                />
+              )}
               {renderTranslateBadge()}
             </span>
 
@@ -226,6 +237,14 @@ export const ArticleRow = memo(function ArticleRow({
               <div className="flex items-center gap-1.5 shrink-0">
                 <span>{articleRelativeTime(article)}</span>
                 {saved && <BookmarkCheck size={12} strokeWidth={1.8} className="text-cinnabar" />}
+                {prestored && (
+                  <Cloud
+                    size={11}
+                    strokeWidth={1.35}
+                    className="text-paper-faint/70"
+                    aria-label="已预存，可离线阅读"
+                  />
+                )}
               </div>
             </div>
 
@@ -276,6 +295,8 @@ interface LeadProps {
   article: Article
   read?: boolean
   saved?: boolean
+  /** 正文已进入持久预存窗口 */
+  prestored?: boolean
   translated?: { title: string; summary?: string }
   displayMode?: 'replace' | 'compare'
   onOpen: (article: Article) => void
@@ -292,6 +313,7 @@ export const LeadStory = memo(function LeadStory({
   article,
   read = false,
   saved = false,
+  prestored = false,
   translated,
   displayMode = 'replace',
   onOpen,
@@ -368,6 +390,14 @@ export const LeadStory = memo(function LeadStory({
                 头条 · {article.sourceLabel}
               </span>
               {saved && <BookmarkCheck size={11} strokeWidth={1.8} className="text-cinnabar" />}
+              {prestored && (
+                <Cloud
+                  size={11}
+                  strokeWidth={1.35}
+                  className="text-paper-faint/70"
+                  aria-label="已预存，可离线阅读"
+                />
+              )}
               {renderTranslateBadge()}
             </span>
             <span className="lead-title mt-1.5 block font-display text-[20px] font-medium leading-[1.32] sm:text-[22px]">
@@ -440,6 +470,14 @@ export const LeadStory = memo(function LeadStory({
                     头条特写 · {article.sourceLabel}
                   </span>
                   {saved && <BookmarkCheck size={13} strokeWidth={1.8} className="text-cinnabar" />}
+                  {prestored && (
+                    <Cloud
+                      size={11}
+                      strokeWidth={1.35}
+                      className="text-paper-faint/70"
+                      aria-label="已预存，可离线阅读"
+                    />
+                  )}
                   {renderTranslateBadge()}
                 </div>
 

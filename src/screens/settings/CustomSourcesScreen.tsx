@@ -37,6 +37,8 @@ import {
   type Preferences,
 } from '../../sources/preferences'
 import type { NewsSource } from '../../sources/registry'
+import { detectFramework } from '../../features/frameworkDetect/detect'
+import type { FrameworkHint } from '../../features/frameworkDetect/types'
 
 interface Props {
   prefs: Preferences
@@ -47,6 +49,7 @@ interface Props {
       url: string
       siteUrl?: string
       kind?: NewsSource['kind']
+      frameworkHint?: FrameworkHint
     },
     targetCategoryId?: CategoryId,
   ) => void
@@ -84,6 +87,7 @@ export function CustomSourcesScreen({
   const [probeCatalogHit, setProbeCatalogHit] = useState<{
     name: string
     extractor?: string
+    frameworkHint?: FrameworkHint
   } | null>(null)
 
   // OPML 导入状态
@@ -257,7 +261,8 @@ export function CustomSourcesScreen({
               ? '通用卡片'
               : '通用'
 
-        setProbeCatalogHit({ name: displayName, extractor: extractorLabel })
+        const hint = detectFramework(text, normalizedUrl)
+        setProbeCatalogHit({ name: displayName, extractor: extractorLabel, frameworkHint: hint ?? undefined })
         if (!inputName) {
           setInputName(displayName)
           setInputLabel(displayName.slice(0, 4))
@@ -312,6 +317,8 @@ export function CustomSourcesScreen({
       siteUrl = `https://${siteUrl}`
     }
 
+    const hint = probeCatalogHit?.frameworkHint
+
     if (editingSourceId) {
       onUpdateCustomSource(editingSourceId, {
         url,
@@ -330,6 +337,7 @@ export function CustomSourcesScreen({
           url,
           siteUrl,
           ...(probeCatalogHit ? { kind: 'web-catalog' as const } : {}),
+          ...(hint ? { frameworkHint: hint } : {}),
         },
         targetCatId,
       )
@@ -687,11 +695,28 @@ export function CustomSourcesScreen({
                 )}
 
                 {probeCatalogHit && (
-                  <div className="mt-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-2.5">
-                    <span className="block font-mono text-[10px] text-emerald-300">
+                  <div className="mt-2 rounded-xl border border-emerald-600/40 bg-emerald-900/20 p-2.5">
+                    <span className="block font-mono text-[10px] text-emerald-700 dark:text-emerald-400">
                       已识别为网页目录（{probeCatalogHit.extractor ?? '通用'}）。将重排为 App 信息流；点进条目后在
                       Android 上嗅探播放。
                     </span>
+
+                    {probeCatalogHit.frameworkHint && (
+                      <div className="mt-1.5 font-mono text-[10px] text-emerald-700 dark:text-emerald-400">
+                        已识别为 {probeCatalogHit.frameworkHint.framework.toUpperCase()}
+                        {probeCatalogHit.frameworkHint.themeVariant
+                          ? ` · ${probeCatalogHit.frameworkHint.themeVariant} 主题`
+                          : ''}
+                        {' '}站点
+                        {probeCatalogHit.frameworkHint.categories?.length
+                          ? ` · ${probeCatalogHit.frameworkHint.categories.length} 个分类`
+                          : ''}
+                        {probeCatalogHit.frameworkHint.searchTemplate ? ' · 支持站内搜索' : ''}
+                        {probeCatalogHit.frameworkHint.sortOptions?.length
+                          ? ' · 支持排序'
+                          : ''}
+                      </div>
+                    )}
                   </div>
                 )}
 

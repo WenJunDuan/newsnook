@@ -24,9 +24,19 @@ function applyChrome(fullScreen: boolean, keepScreenOn: boolean): void {
 
   if (typeof document === 'undefined') return
   if (fullScreen) {
-    document.documentElement.requestFullscreen?.().catch(() => {})
-  } else if (document.fullscreenElement) {
-    document.exitFullscreen?.().catch(() => {})
+    const el = document.documentElement as any
+    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen
+    if (req) {
+      Promise.resolve(req.call(el)).catch(() => {})
+    }
+  } else {
+    const doc = document as any
+    if (doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement || doc.msFullscreenElement) {
+      const ext = doc.exitFullscreen || doc.webkitExitFullscreen || doc.mozCancelFullScreen || doc.msExitFullscreen
+      if (ext) {
+        Promise.resolve(ext.call(doc)).catch(() => {})
+      }
+    }
   }
 }
 

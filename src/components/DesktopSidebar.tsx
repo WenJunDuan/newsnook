@@ -33,6 +33,8 @@ interface Props {
     items: PresetSwitcherItem[]
     onSelect: (id: string) => void
     onManage: () => void
+    onSites?: () => void
+    siteCount?: number
   }
   onNavigateHome: () => void
   onNavigateLater: () => void
@@ -124,6 +126,8 @@ export const DesktopSidebar = memo(function DesktopSidebar({
               items={presetSwitcher.items}
               onSelect={presetSwitcher.onSelect}
               onManage={presetSwitcher.onManage}
+              onSites={presetSwitcher.onSites}
+              siteCount={presetSwitcher.siteCount}
             />
           </div>
         )}

@@ -1,5 +1,5 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import { ChevronLeft, RotateCw, Sparkles } from 'lucide-react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, Loader2, RotateCw, Search, Sparkles, X } from 'lucide-react'
 
 import { ArticleRow, LeadStory } from '../components/ArticleItem'
 import { CategoryRail } from '../components/CategoryRail'
@@ -18,8 +18,13 @@ import type { Article, RefreshProgress, SourceStatus } from '../lib/types'
 import { DEFAULT_TRANSLATION_PREFS } from '../features/translation/config'
 import { useFeedTranslation } from '../features/translation/useFeedTranslation'
 import type { TranslationPrefs } from '../features/translation/types'
+import { extractCatalog } from '../features/catalogEngine/engine'
+import { catalogHtmlToArticles } from '../features/catalogEngine/toArticles'
 import type { CategoryId, NewsCategory } from '../sources/categories'
 import { findSource, type NewsSource } from '../sources/registry'
+import { fetchAbsoluteText } from '../lib/http'
+
+const EMPTY_ARTICLE_IDS: ReadonlySet<string> = new Set()
 
 interface Props {
   title: string
@@ -33,6 +38,8 @@ interface Props {
   lastUpdated?: number
   readIds: Set<string>
   laterIds: Set<string>
+  /** 持久预存正文 ID；仅用于低权重云朵状态标记 */
+  prestoredIds?: ReadonlySet<string>
   showLead: boolean
   /** 内容全部来自本地缓存，尚未拿到本次联网结果 */
   offline?: boolean
@@ -53,6 +60,8 @@ interface Props {
     items: PresetSwitcherItem[]
     onSelect: (id: string) => void
     onManage: () => void
+    onSites?: () => void
+    siteCount?: number
   }
   translationPrefs?: TranslationPrefs
   /** 自定义源，用于刷新进度显示名称 */
@@ -67,6 +76,10 @@ interface Props {
   onBrandTap?: () => void
   /** 递增时触发与下拉相同的刷新动画与加载（底栏双击速闻） */
   pullRefreshSeq?: number
+  /** 站内搜索模板（仅 web-catalog 源有 frameworkHint.searchTemplate 时传入） */
+  searchTemplate?: string
+  /** 框架站点分类列表（frameworkHint.categories） */
+  frameworkCategories?: { title: string; url: string }[]
 }
 
 /** 邻页预览：排版与正式列表对齐，并恢复该分类上次滚动位置，避免滑入时先顶后跳 */
@@ -75,6 +88,7 @@ function CategoryPeek({
   showLead,
   readIds,
   laterIds,
+  prestoredIds,
   scrollTop = 0,
   onOpen,
 }: {
@@ -82,6 +96,7 @@ function CategoryPeek({
   showLead: boolean
   readIds: Set<string>
   laterIds: Set<string>
+  prestoredIds: ReadonlySet<string>
   scrollTop?: number
   onOpen: (article: Article) => void
 }) {
@@ -128,6 +143,7 @@ function CategoryPeek({
             article={lead}
             read={readIds.has(lead.id)}
             saved={laterIds.has(lead.id)}
+            prestored={prestoredIds.has(lead.id)}
             onOpen={onOpen}
             revealed
             variant="lead"
@@ -146,6 +162,7 @@ function CategoryPeek({
                   article={article}
                   read={readIds.has(article.id)}
                   saved={laterIds.has(article.id)}
+                  prestored={prestoredIds.has(article.id)}
                   onOpen={onOpen}
                   revealed
                   variant="row"
@@ -171,6 +188,7 @@ export const FeedScreen = memo(function FeedScreen({
   lastUpdated,
   readIds,
   laterIds,
+  prestoredIds = EMPTY_ARTICLE_IDS,
   showLead,
   offline,
   categories,
@@ -190,6 +208,8 @@ export const FeedScreen = memo(function FeedScreen({
   onBack,
   onBrandTap,
   pullRefreshSeq = 0,
+  searchTemplate,
+  frameworkCategories,
 }: Props) {
   const isDesktop = useIsDesktop()
   const reduced = useReducedMotion()
@@ -203,6 +223,103 @@ export const FeedScreen = memo(function FeedScreen({
   const scrollTopRef = useRef(0)
   const onLoadMoreRef = useRef(onLoadMore)
   onLoadMoreRef.current = onLoadMore
+
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searching, setSearching] = useState(false)
+  const [searchResults, setSearchResults] = useState<Article[] | null>(null)
+  const [searchError, setSearchError] = useState<string | null>(null)
+
+  const handleSearch = useCallback(async () => {
+    if (!searchTemplate || !searchQuery.trim()) return
+    const url = searchTemplate.replace('{query}', encodeURIComponent(searchQuery.trim()))
+    setSearching(true)
+    setSearchError(null)
+    try {
+      const html = await fetchAbsoluteText(url)
+      const catalog = extractCatalog(html, url)
+      if (!catalog.items.length) {
+        setSearchResults([])
+        return
+      }
+      const dummySource: NewsSource = {
+        id: 'search_temp',
+        name: 'Search',
+        label: 'Search',
+        group: 'custom',
+        kind: 'web-catalog',
+        url,
+        enabled: true,
+      }
+      const results = catalogHtmlToArticles(dummySource, html, Date.now())
+      setSearchResults(results)
+    } catch (err) {
+      setSearchError(err instanceof Error ? err.message : '搜索失败')
+    } finally {
+      setSearching(false)
+    }
+  }, [searchTemplate, searchQuery])
+
+  const clearSearch = useCallback(() => {
+    setSearchQuery('')
+    setSearchResults(null)
+    setSearchError(null)
+  }, [])
+
+  const [activeFwCat, setActiveFwCat] = useState<number | null>(null)
+  const [fwCatArticles, setFwCatArticles] = useState<Article[] | null>(null)
+  const [fwCatLoading, setFwCatLoading] = useState(false)
+  const [fwCatPage, setFwCatPage] = useState(0)
+  const [fwCatExhausted, setFwCatExhausted] = useState(false)
+
+  const selectFwCategory = useCallback(async (idx: number | null) => {
+    setActiveFwCat(idx)
+    setFwCatPage(0)
+    setFwCatExhausted(false)
+    if (idx === null || !frameworkCategories?.[idx]) {
+      setFwCatArticles(null)
+      return
+    }
+    const catUrl = frameworkCategories[idx].url
+    setFwCatLoading(true)
+    try {
+      const html = await fetchAbsoluteText(catUrl)
+      const results = catalogHtmlToArticles(
+        { id: 'fw_cat', name: '', label: '', group: 'custom', kind: 'web-catalog', url: catUrl, enabled: true },
+        html, Date.now(),
+      )
+      setFwCatArticles(results)
+    } catch {
+      setFwCatArticles([])
+    } finally {
+      setFwCatLoading(false)
+    }
+  }, [frameworkCategories])
+
+  const loadMoreFwCat = useCallback(async () => {
+    if (fwCatLoading || fwCatExhausted || activeFwCat === null || !frameworkCategories?.[activeFwCat]) return
+    const catUrl = frameworkCategories[activeFwCat].url
+    const nextPage = fwCatPage + 1
+    const pageUrl = catUrl.replace(/\.html$/i, '') + `/page/${nextPage + 1}.html`
+    setFwCatLoading(true)
+    try {
+      const html = await fetchAbsoluteText(pageUrl)
+      const results = catalogHtmlToArticles(
+        { id: 'fw_cat', name: '', label: '', group: 'custom', kind: 'web-catalog', url: pageUrl, enabled: true },
+        html, Date.now(),
+      )
+      if (!results.length) {
+        setFwCatExhausted(true)
+      } else {
+        setFwCatArticles((prev) => [...(prev ?? []), ...results])
+        setFwCatPage(nextPage)
+      }
+    } catch {
+      setFwCatExhausted(true)
+    } finally {
+      setFwCatLoading(false)
+    }
+  }, [activeFwCat, frameworkCategories, fwCatPage, fwCatLoading, fwCatExhausted])
+
   const loadingMoreRef = useRef(loadingMore)
   loadingMoreRef.current = loadingMore
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null)
@@ -397,6 +514,7 @@ export const FeedScreen = memo(function FeedScreen({
           article={lead}
           read={readIds.has(lead.id)}
           saved={laterIds.has(lead.id)}
+          prestored={prestoredIds.has(lead.id)}
           translated={translations.get(lead.id)}
           displayMode={activeTranslationPrefs.displayMode}
           onOpen={onOpen}
@@ -405,74 +523,207 @@ export const FeedScreen = memo(function FeedScreen({
         />
       )}
 
-      {articles.length === 0 && refreshing && <FeedSkeleton showLead={showLead} />}
-
-      {articles.length === 0 && !refreshing && (
-        <div className="page-x py-16 text-center text-[13px] leading-relaxed text-paper-faint">
-          {selectedSourceId ? (
-            <>
-              <p>该信源暂无已缓存文章。</p>
+      {searchTemplate && (
+        <div className="page-x lg:px-6 xl:px-8 2xl:px-10 flex items-center gap-2 py-2">
+          <div className="relative flex-1">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-paper-muted" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              placeholder="站内搜索…"
+              className="w-full rounded-xl border border-haze bg-ink py-2 pl-8 pr-8 text-[13px] text-paper placeholder:text-paper-muted/50 focus:border-cinnabar/40 focus:outline-none"
+            />
+            {searchQuery && (
               <button
                 type="button"
-                onClick={() => onSelectSource?.(null)}
-                className="mt-3 inline-flex items-center gap-1 rounded-full border border-haze bg-ink-raised px-3.5 py-1 text-[11.5px] text-paper-muted transition-colors hover:text-paper hover:border-paper-faint"
+                onClick={clearSearch}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-paper-muted hover:text-paper"
               >
-                查看分类全部信源
+                <X size={14} />
               </button>
-            </>
-          ) : (
-            <p>
-              还没有取到内容。
-              <br />
-              下拉刷新，或切换其他分类。
-            </p>
-          )}
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={handleSearch}
+            disabled={searching || !searchQuery.trim()}
+            className="rounded-xl border border-haze bg-paper/5 px-3 py-2 font-mono text-[11px] text-paper-muted transition-colors hover:border-cinnabar/60 hover:text-paper disabled:opacity-40"
+          >
+            {searching ? <Loader2 size={13} className="animate-spin" /> : '搜索'}
+          </button>
         </div>
       )}
 
-      {grouped.map(([bucket, items]) => (
-        <div key={bucket}>
-          <div className="page-x lg:px-6 xl:px-8 2xl:px-10 flex items-center gap-2.5 pt-4 pb-1.5">
-            <span className="font-mono text-[11px] tracking-[0.16em] text-paper-muted font-medium">{bucket}</span>
-            <span className="h-px flex-1 bg-haze" aria-hidden />
-          </div>
+      {searchError && (
+        <p className="page-x lg:px-6 xl:px-8 2xl:px-10 py-2 text-[12px] text-red-400">{searchError}</p>
+      )}
 
-          {/* 按平台只渲染一种列表布局，减少 50% DOM 节点与 React Diff 开销 */}
-          {!isDesktop ? (
-            <ul className="divide-y divide-haze">
-              {items.map((article) => (
-                <ArticleRow
-                  key={article.id}
-                  article={article}
-                  read={readIds.has(article.id)}
-                  saved={laterIds.has(article.id)}
-                  translated={translations.get(article.id)}
-                  displayMode={activeTranslationPrefs.displayMode}
-                  onOpen={onOpen}
-                  onSourceClick={onSelectSource}
-                  variant="row"
-                />
-              ))}
-            </ul>
-          ) : (
-            <ul className="grid grid-cols-2 gap-4 px-6 py-2 xl:grid-cols-3 2xl:grid-cols-4 min-[2100px]:grid-cols-5 xl:px-8 2xl:px-10 min-[2100px]:gap-5">
-              {items.map((article) => (
-                <ArticleRow
-                  key={article.id}
-                  article={article}
-                  read={readIds.has(article.id)}
-                  saved={laterIds.has(article.id)}
-                  translated={translations.get(article.id)}
-                  displayMode={activeTranslationPrefs.displayMode}
-                  onOpen={onOpen}
-                  onSourceClick={onSelectSource}
-                  variant="card"
-                />
-              ))}
-            </ul>
+      {frameworkCategories && frameworkCategories.length > 0 && (
+        <div className="page-x lg:px-6 xl:px-8 2xl:px-10 flex gap-1.5 overflow-x-auto py-2 scrollbar-none">
+          <button
+            type="button"
+            onClick={() => selectFwCategory(null)}
+            className={`shrink-0 rounded-full px-3 py-1 text-[12px] transition-colors ${
+              activeFwCat === null
+                ? 'bg-cinnabar text-white'
+                : 'bg-paper/10 text-paper-muted hover:bg-paper/20'
+            }`}
+          >
+            全部
+          </button>
+          {frameworkCategories.map((cat, idx) => (
+            <button
+              key={cat.url}
+              type="button"
+              onClick={() => selectFwCategory(idx)}
+              className={`shrink-0 rounded-full px-3 py-1 text-[12px] transition-colors ${
+                activeFwCat === idx
+                  ? 'bg-cinnabar text-white'
+                  : 'bg-paper/10 text-paper-muted hover:bg-paper/20'
+              }`}
+            >
+              {cat.title}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {searchResults !== null ? (
+        <div className="page-x lg:px-6 xl:px-8 2xl:px-10">
+          <div className="flex items-center justify-between py-2">
+            <span className="font-mono text-[11px] text-paper-muted">
+              搜索结果：{searchResults.length} 条
+            </span>
+            <button
+              type="button"
+              onClick={clearSearch}
+              className="font-mono text-[11px] text-cinnabar-soft hover:text-cinnabar"
+            >
+              返回列表
+            </button>
+          </div>
+          <ul className="divide-y divide-haze">
+            {searchResults.map((article) => (
+              <ArticleRow
+                key={article.id}
+                article={article}
+                read={readIds.has(article.id)}
+                saved={laterIds.has(article.id)}
+                prestored={prestoredIds.has(article.id)}
+                onOpen={onOpen}
+                variant="row"
+              />
+            ))}
+          </ul>
+        </div>
+      ) : fwCatArticles !== null ? (
+        <div className="page-x lg:px-6 xl:px-8 2xl:px-10">
+          {fwCatLoading && !fwCatArticles.length && <FeedSkeleton showLead={false} />}
+          <ul className="divide-y divide-haze">
+            {fwCatArticles.map((article) => (
+              <ArticleRow
+                key={article.id}
+                article={article}
+                read={readIds.has(article.id)}
+                saved={laterIds.has(article.id)}
+                prestored={prestoredIds.has(article.id)}
+                onOpen={onOpen}
+                variant="row"
+              />
+            ))}
+          </ul>
+          {!fwCatExhausted && fwCatArticles.length > 0 && (
+            <div className="flex justify-center py-6">
+              <button
+                type="button"
+                onClick={loadMoreFwCat}
+                disabled={fwCatLoading}
+                className="rounded-xl border border-haze bg-paper/5 px-4 py-2 font-mono text-[11px] text-paper-muted transition-colors hover:border-cinnabar/60 hover:text-paper disabled:opacity-40"
+              >
+                {fwCatLoading ? <Loader2 size={13} className="animate-spin" /> : '加载更多'}
+              </button>
+            </div>
+          )}
+          {fwCatExhausted && fwCatArticles.length > 0 && (
+            <p className="py-4 text-center font-mono text-[10px] text-paper-faint">没有更多了</p>
           )}
         </div>
-      ))}
+      ) : (
+        <>
+          {articles.length === 0 && refreshing && <FeedSkeleton showLead={showLead} />}
+
+          {articles.length === 0 && !refreshing && (
+            <div className="page-x py-16 text-center text-[13px] leading-relaxed text-paper-faint">
+              {selectedSourceId ? (
+                <>
+                  <p>该信源暂无已缓存文章。</p>
+                  <button
+                    type="button"
+                    onClick={() => onSelectSource?.(null)}
+                    className="mt-3 inline-flex items-center gap-1 rounded-full border border-haze bg-ink-raised px-3.5 py-1 text-[11.5px] text-paper-muted transition-colors hover:text-paper hover:border-paper-faint"
+                  >
+                    查看分类全部信源
+                  </button>
+                </>
+              ) : (
+                <p>
+                  还没有取到内容。
+                  <br />
+                  下拉刷新，或切换其他分类。
+                </p>
+              )}
+            </div>
+          )}
+
+          {grouped.map(([bucket, items]) => (
+            <div key={bucket}>
+              <div className="page-x lg:px-6 xl:px-8 2xl:px-10 flex items-center gap-2.5 pt-4 pb-1.5">
+                <span className="font-mono text-[11px] tracking-[0.16em] text-paper-muted font-medium">{bucket}</span>
+                <span className="h-px flex-1 bg-haze" aria-hidden />
+              </div>
+
+              {/* 按平台只渲染一种列表布局，减少 50% DOM 节点与 React Diff 开销 */}
+              {!isDesktop ? (
+                <ul className="divide-y divide-haze">
+                  {items.map((article) => (
+                    <ArticleRow
+                      key={article.id}
+                      article={article}
+                      read={readIds.has(article.id)}
+                      saved={laterIds.has(article.id)}
+                      prestored={prestoredIds.has(article.id)}
+                      translated={translations.get(article.id)}
+                      displayMode={activeTranslationPrefs.displayMode}
+                      onOpen={onOpen}
+                      onSourceClick={onSelectSource}
+                      variant="row"
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <ul className="grid grid-cols-2 gap-4 px-6 py-2 xl:grid-cols-3 2xl:grid-cols-4 min-[2100px]:grid-cols-5 xl:px-8 2xl:px-10 min-[2100px]:gap-5">
+                  {items.map((article) => (
+                    <ArticleRow
+                      key={article.id}
+                      article={article}
+                      read={readIds.has(article.id)}
+                      saved={laterIds.has(article.id)}
+                      prestored={prestoredIds.has(article.id)}
+                      translated={translations.get(article.id)}
+                      displayMode={activeTranslationPrefs.displayMode}
+                      onOpen={onOpen}
+                      onSourceClick={onSelectSource}
+                      variant="card"
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </>
+      )}
 
       <footer
         className={`page-x lg:px-6 xl:px-8 2xl:px-10 pt-10 pb-8 text-center font-mono text-[10px] leading-relaxed text-paper-faint ${
@@ -590,6 +841,8 @@ export const FeedScreen = memo(function FeedScreen({
                   items={presetSwitcher.items}
                   onSelect={presetSwitcher.onSelect}
                   onManage={presetSwitcher.onManage}
+                  onSites={presetSwitcher.onSites}
+                  siteCount={presetSwitcher.siteCount}
                 />
               </div>
             )}
@@ -726,6 +979,7 @@ export const FeedScreen = memo(function FeedScreen({
                 showLead={showLead}
                 readIds={readIds}
                 laterIds={laterIds}
+                prestoredIds={prestoredIds}
                 scrollTop={scrollByCategory.current[prevCategory.id] ?? 0}
                 onOpen={onOpen}
               />
@@ -768,6 +1022,7 @@ export const FeedScreen = memo(function FeedScreen({
                 showLead={showLead}
                 readIds={readIds}
                 laterIds={laterIds}
+                prestoredIds={prestoredIds}
                 scrollTop={scrollByCategory.current[nextCategory.id] ?? 0}
                 onOpen={onOpen}
               />

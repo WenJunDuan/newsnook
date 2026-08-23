@@ -8,17 +8,35 @@ interface DeviceMediaControlsPlugin {
   clearBrightness(): Promise<void>
   getVolume(): Promise<{ value: number }>
   setVolume(options: { value: number }): Promise<{ value: number }>
+  getBattery(): Promise<{ level: number; charging: boolean }>
   lockOrientation(options: { orientation: VideoScreenOrientation }): Promise<void>
   unlockOrientation(): Promise<void>
+  setVideoFullscreen(options: { active: boolean }): Promise<void>
 }
 
-export type VideoScreenOrientation = 'portrait' | 'landscape'
+/** portrait / landscape 为锁定方向；sensor 跟随设备横竖屏（覆盖系统自动旋转开关） */
+export type VideoScreenOrientation = 'portrait' | 'landscape' | 'sensor'
 
 const DeviceMediaControls = registerPlugin<DeviceMediaControlsPlugin>('DeviceMediaControls')
 
 /** 真机才有原生实现；浏览器与未重新编译的旧包都走 Web 兜底。 */
 function nativeAvailable(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('DeviceMediaControls')
+}
+
+/**
+ * Switch the Android Activity into/out of the video immersive state.
+ * Returns false only when the current binary does not expose the native method,
+ * allowing callers to retain a compatibility fallback for older installations.
+ */
+export async function setVideoFullscreen(active: boolean): Promise<boolean> {
+  if (!nativeAvailable()) return false
+  try {
+    await DeviceMediaControls.setVideoFullscreen({ active })
+    return true
+  } catch {
+    return false
+  }
 }
 
 interface LockableScreenOrientation {
@@ -45,6 +63,16 @@ export async function lockVideoScreenOrientation(
     } catch {
       return false
     }
+  }
+
+  // 浏览器没有「跟随设备」可锁：解锁方向锁即回到系统默认行为，视为成功
+  if (orientation === 'sensor') {
+    try {
+      webScreenOrientation()?.unlock?.()
+    } catch {
+      /* ignore */
+    }
+    return true
   }
 
   const controller = webScreenOrientation()
@@ -201,5 +229,19 @@ export function createVolumeControl(
       }
     },
     release() {},
+  }
+}
+
+/** Sticky battery intent; returns null on Web / older APKs without getBattery. */
+export async function getNativeBattery(): Promise<{ level: number; charging: boolean } | null> {
+  if (!nativeAvailable()) return null
+  try {
+    const result = await DeviceMediaControls.getBattery()
+    return {
+      level: clampLevel(result.level),
+      charging: Boolean(result.charging),
+    }
+  } catch {
+    return null
   }
 }

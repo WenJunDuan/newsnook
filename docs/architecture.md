@@ -175,6 +175,7 @@ openArticle → setReading + markRead
 ```text
 HTML / JSON / iframe 嵌入页 / Android 短生命周期 WebView
   → MediaObservation[]（network / DOM / fetch / XHR / performance / MSE / DRM）
+  → admitObservation（Classifier Gate：静态资源/performance 噪声/弱 structured 信号过滤）
   → collectMediaCandidates（分类、评分、指纹去重、分片抑制）
   → HLS / DASH Manifest 轻量解析
   → MediaDescriptor（原始 URL + pageUrl + headers + tracks + DRM）
@@ -185,8 +186,10 @@ HTML / JSON / iframe 嵌入页 / Android 短生命周期 WebView
 
 关键约束：
 
-- 静态 HTML / payload 已发现可播放资源时，不再启动 Android 运行时探测；否则由 `MediaSnifferPlugin` 在隔离 WebView 中观察网络、DOM、MSE 与 EME 信号。
-- 正文 iframe 不直接绕过发现层：最多取 3 个嵌入页作为独立探测目标。YouTube 组件先探测公开、非 DRM 且可完整播放的资源，成功后交给 `InkVideoPlayer`；只有未得到完整资源、只得到分片/无声自适应轨、检测到 DRM 或加载失败时，才回退原站 iframe。
+- **Classifier Gate**（`classifier.admitObservation`）：任意 observation 入库前统一 URL-first 门控；图片/CSS/JS/字体扩展名、无 MIME/codec/清单扩展名的 `static` 弱信号、非媒体形态的 `performance` 条目会被丢弃；`selectPlayableAsset` 进一步排除仅含 `static` 源的弱候选。
+- **Target Planner**（`targetPlanner.planSniffTargets`）：静态扫描未发现 direct media 时，按 JSON-LD embedUrl/WatchAction → 同站通用播放路径链接 → iframe 嵌入页的优先级规划 secondary 播放页；首个目标使用完整预算，编排层以全局 deadline 截断后续目标，避免均分后每个播放器只剩短窗口。
+- 静态 HTML / payload 已发现可播放资源时，不再启动 Android 运行时探测；否则由 `MediaSnifferPlugin` 在隔离 WebView（360×640，屏外）中观察网络、DOM、MSE 与 EME 信号；probe 队列跳过常见 tracker 域并提高无扩展名 URL 探针配额（24/会话）。
+- 正文 iframe 不直接绕过发现层：最多取 3 个嵌入页作为独立探测目标。已加载 iframe 文档中的 inline 强媒体配置可作为静态观察进入 Graph，但普通跨文档消息仍需对应媒体 URL 的网络观察。YouTube 组件先探测公开、非 DRM 且可完整播放的资源，成功后交给 `InkVideoPlayer`；只有未得到完整资源、只得到分片/无声自适应轨、检测到 DRM 或加载失败时，才回退原站 iframe。
 - 无扩展名 URL 会从查询参数和结构化播放器数据推断 MIME；URL 自带 byte range 的响应只记为分片，不能作为完整 progressive 视频。结构化候选明确区分复用音视频资源与 video-only 自适应轨。
 - 播放 URL 保留完整签名参数；去重指纹才忽略常见临时授权字段。完整 Manifest 存在时不把 `.ts` / `.m4s` 分片当成视频。
 - `MediaDescriptor` 只向播放器交付 `progressive`、`hls`、`dash`；`blob:`/MSE 是发现信号而非可移交 URL；DRM 进入原站授权边界，不尝试绕过。

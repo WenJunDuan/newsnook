@@ -1,10 +1,10 @@
-import { Capacitor } from '@capacitor/core'
-import { StatusBar, Style } from '@capacitor/status-bar'
+import { Capacitor, SystemBars, SystemBarsStyle } from '@capacitor/core'
 
 import { type ResolvedTheme } from './theme'
 
 type NativeChromeBridge = {
   setFullScreen?: (fullScreen: boolean) => void
+  setSystemTheme?: (theme: string) => void
 }
 
 function isSplashBoot(): boolean {
@@ -20,22 +20,41 @@ function nativeChromeBridge(): NativeChromeBridge | undefined {
 
 /**
  * 隐藏/恢复系统状态栏与导航栏。
- * Android WebView 边到边 + overlays 时，HTML requestFullscreen 只会让状态栏变透明浮层，必须走原生藏栏。
- * JavascriptInterface 不一定是 typeof === 'function'，只做真值判断。
+ *
+ * Capacitor 8 已内置 SystemBars，优先用它控制现代 edge-to-edge Window；
+ * NewsNookNative 同步维护 MainActivity 的沉浸态与 OEM 自愈逻辑。两条路径
+ * 最终都落到 WindowInsetsControllerCompat，重复调用是幂等的。
  */
-export function setNativeFullScreen(fullScreen: boolean): void {
+export async function setNativeFullScreen(fullScreen: boolean): Promise<void> {
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('is-video-fullscreen', fullScreen)
+  }
+
+  // 保留项目已有桥：除了立即藏栏，它还会记录 videoFullscreenActive，
+  // 让旋转、重新获焦、Insets 重新分发时继续自愈。JavascriptInterface
+  // 未必能用 typeof === 'function' 判断，因此仍只做真值判断。
   const bridge = nativeChromeBridge()
-  if (bridge?.setFullScreen) {
-    bridge.setFullScreen(fullScreen)
+  try {
+    if (bridge?.setFullScreen) bridge.setFullScreen(fullScreen)
+  } catch {
+    // SystemBars below remains the authoritative Capacitor path.
+  }
+
+  if (!Capacitor.isNativePlatform()) return
+
+  try {
+    if (fullScreen) await SystemBars.hide()
+    else await SystemBars.show()
+  } catch {
+    // 旧安装包或异常原生环境仍由 NewsNookNative 兜底，不打断播放器切换。
   }
 }
 
 /**
  * 真机系统栏：边到边 + 透明栏，底色由 Web（splash / AppShell safe-area 条）提供。
  *
- * 注意：@capacitor/status-bar 的 setBackgroundColor 在 API 31 上仍会把状态栏刷成不透明色，
- * 且不会尊重 overlays；若在 setOverlaysWebView(true) 之后调用，会盖住 splash 渐变，
- * 看起来像一条与 #0E0F12 不同的「纯黑」顶栏。因此这里只调 style + overlays。
+ * 边到边与透明栏在 MainActivity.onCreate 建立；这里只负责图标颜色跟随主题。
+ * 使用 Capacitor 8 内置 SystemBars，而不是旧的 @capacitor/status-bar。
  */
 export async function applyNativeChrome(theme: ResolvedTheme): Promise<void> {
   if (!Capacitor.isNativePlatform()) return
@@ -43,22 +62,17 @@ export async function applyNativeChrome(theme: ResolvedTheme): Promise<void> {
   const effective: ResolvedTheme = isSplashBoot() ? 'dark' : theme
 
   try {
-    // Style.Dark = 深色底上的浅色图标
-    await StatusBar.setStyle({ style: effective === 'dark' ? Style.Dark : Style.Light })
+    await SystemBars.setStyle({
+      style: effective === 'light' ? SystemBarsStyle.Light : SystemBarsStyle.Dark,
+    })
   } catch {
-    // ignore
+    // 继续走项目自带桥，兼容未同步原生工程的旧安装包。
   }
 
   try {
-    // 必须放在最后：把栏保持透明，让 Web 背景透出
-    await StatusBar.setOverlaysWebView({ overlay: true })
-  } catch {
-    // Android 15+ 可能忽略
-  }
-
-  try {
-    if (typeof (window as any).NewsNookNative?.setSystemTheme === 'function') {
-      ;(window as any).NewsNookNative.setSystemTheme(effective)
+    const bridge = nativeChromeBridge()
+    if (bridge?.setSystemTheme) {
+      bridge.setSystemTheme(effective)
     }
   } catch {
     // ignore

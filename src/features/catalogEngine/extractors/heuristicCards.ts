@@ -1,10 +1,13 @@
 import type { CatalogItem } from '../types'
 import {
   absoluteUrl,
+  isLikelyBadgeTitle,
   isLikelyNavTitle,
   isUtilityPath,
   looksLikeDetailUrl,
+  normalizeCatalogTitle,
   pathPattern,
+  pickBetterCatalogTitle,
   sameOrigin,
   stripTags,
 } from '../normalize'
@@ -27,19 +30,76 @@ function attrValue(attrs: string, name: string): string | undefined {
   return match?.slice(1).find(Boolean)?.trim()
 }
 
+/** MacCMS / 懒加载常见：src 先放 1×1 data URI 或空白图，真图在 data-src。 */
+function isPlaceholderImageSrc(src: string): boolean {
+  const value = src.trim().toLowerCase()
+  if (!value) return true
+  if (value.startsWith('data:')) return true
+  return /(?:^|[/?&=._-])(?:placeholder|blank|spacer|transparent|lazy|loading|pixel|1x1)(?:[/?&=._-]|$)/i.test(
+    value,
+  )
+}
+
 function pickImage(inner: string, baseUrl: string): string | undefined {
-  const imgTag = inner.match(/<img\b[^>]*>/i)?.[0]
-  if (!imgTag) {
-    const bg = inner.match(/background-image:\s*url\((['"]?)([^'")]+)\1\)/i)?.[2]
-    return bg ? absoluteUrl(bg, baseUrl) : undefined
+  for (const match of inner.matchAll(/<img\b[^>]*>/gi)) {
+    const tag = match[0]
+    // Prefer lazy-load attrs over src: many CMS pages put a data: GIF in src.
+    const candidates = [
+      attrValue(tag, 'data-src'),
+      attrValue(tag, 'data-original'),
+      attrValue(tag, 'data-lazy-src'),
+      attrValue(tag, 'data-url'),
+      attrValue(tag, 'src'),
+    ]
+    for (const candidate of candidates) {
+      if (!candidate || isPlaceholderImageSrc(candidate)) continue
+      const abs = absoluteUrl(candidate, baseUrl)
+      if (abs) return abs
+    }
   }
 
-  const src =
-    attrValue(imgTag, 'src') ||
-    attrValue(imgTag, 'data-src') ||
-    attrValue(imgTag, 'data-original') ||
-    attrValue(imgTag, 'data-lazy-src')
-  return src ? absoluteUrl(src, baseUrl) : undefined
+  for (const match of inner.matchAll(/background-image:\s*url\((['"]?)([^'")]+)\1\)/gi)) {
+    const raw = match[2] ?? ''
+    if (isPlaceholderImageSrc(raw)) continue
+    const abs = absoluteUrl(raw, baseUrl)
+    if (abs) return abs
+  }
+
+  return undefined
+}
+
+function extractTitleFromInner(inner: string): string | undefined {
+  const heading = inner.match(/<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]>/i)?.[1]
+  if (heading) {
+    const title = normalizeCatalogTitle(stripTags(heading))
+    if (title.length >= 2 && title.length <= 80 && !isLikelyBadgeTitle(title)) return title
+  }
+  return undefined
+}
+
+function extractAnchorTitle(attrs: string, inner: string): string {
+  const fromHeading = extractTitleFromInner(inner)
+  if (fromHeading) return fromHeading
+
+  const imgAlt = inner.match(/<img\b[^>]*>/i)?.[0]
+  const altText = imgAlt ? attrValue(imgAlt, 'alt') : undefined
+
+  const raw =
+    stripTags(attrValue(attrs, 'title') || attrValue(attrs, 'aria-label') || '') ||
+    stripTags(altText || '') ||
+    stripTags(inner)
+
+  return normalizeCatalogTitle(raw)
+}
+
+function mergeCards(existing: RawCard, incoming: RawCard): RawCard {
+  const title = pickBetterCatalogTitle(existing.title, incoming.title)
+  return {
+    ...existing,
+    image: incoming.image || existing.image,
+    title,
+    score: Math.max(existing.score, incoming.score),
+  }
 }
 
 function scoreCard(card: Omit<RawCard, 'score' | 'order'>, order: number): RawCard {
@@ -54,8 +114,7 @@ function scoreCard(card: Omit<RawCard, 'score' | 'order'>, order: number): RawCa
 }
 
 function extractAnchorBlocks(html: string, pageUrl: string): RawCard[] {
-  const cards: RawCard[] = []
-  const seen = new Set<string>()
+  const cards = new Map<string, RawCard>()
   let order = 0
 
   for (const match of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)) {
@@ -68,7 +127,6 @@ function extractAnchorBlocks(html: string, pageUrl: string): RawCard[] {
     if (!originUrl || !sameOrigin(originUrl, pageUrl)) continue
 
     const key = originUrl.toLowerCase()
-    if (seen.has(key)) continue
     if (isUtilityPath(originUrl)) continue
 
     try {
@@ -80,34 +138,34 @@ function extractAnchorBlocks(html: string, pageUrl: string): RawCard[] {
       continue
     }
 
-    const imgAlt = inner.match(/<img\b[^>]*>/i)?.[0]
-    const altText = imgAlt ? attrValue(imgAlt, 'alt') : undefined
-
-    const title =
-      stripTags(attrValue(attrs, 'title') || attrValue(attrs, 'aria-label') || '') ||
-      stripTags(altText || '') ||
-      stripTags(inner)
-
-    if (!title || title.length < 4 || isLikelyNavTitle(title)) continue
+    const title = extractAnchorTitle(attrs, inner)
+    const image = pickImage(inner, originUrl)
+    if (isLikelyNavTitle(title)) continue
+    if (isLikelyBadgeTitle(title) && !image) continue
+    if (!image && (!title || title.length < 2)) continue
 
     const pattern = pathPattern(originUrl)
     if (!pattern) continue
 
-    seen.add(key)
-    cards.push(
-      scoreCard(
-        {
-          originUrl,
-          title,
-          image: pickImage(inner, originUrl),
-          pattern,
-        },
-        order++,
-      ),
+    const card = scoreCard(
+      {
+        originUrl,
+        title: isLikelyBadgeTitle(title) ? '' : title,
+        image,
+        pattern,
+      },
+      order++,
     )
+
+    const existing = cards.get(key)
+    if (existing) {
+      cards.set(key, mergeCards(existing, card))
+    } else {
+      cards.set(key, card)
+    }
   }
 
-  return cards
+  return [...cards.values()]
 }
 
 /**
@@ -149,7 +207,7 @@ export function extractHeuristicCardCatalog(html: string, pageUrl: string): Cata
   }
 
   const filtered = raw
-    .filter((card) => patternSet.has(card.pattern))
+    .filter((card) => patternSet.has(card.pattern) && card.title.length >= 2)
     .sort((a, b) => a.order - b.order)
 
   if (filtered.length < MIN_ITEMS) return []
