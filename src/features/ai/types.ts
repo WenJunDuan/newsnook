@@ -51,5 +51,53 @@ export interface AiChatMessage {
   content: string
   /** 回答引用到的本地文章 */
   refs?: ChatArticleRef[]
+  /** 舆情报告：本次分析覆盖的语料范围一句话 */
+  scopeText?: string
   at: number
 }
+
+/** 舆情语料：实体检索词的三个层次 */
+export interface EntityTerms {
+  /** 本名、简称、英文名、股票代码等指向同一主体的说法 */
+  aliases: string[]
+  /** 子公司、品牌、产品、关键人物等强关联主体 */
+  related: string[]
+  /** 行业、赛道、主要竞对等板块背景词 */
+  industry: string[]
+}
+
+/** 语料中单篇报道与实体的关系 */
+export type CorpusRelevance = 'core' | 'context'
+
+export interface CorpusArticle {
+  articleId: string
+  relevance: CorpusRelevance
+  score: number
+  /** 命中的检索词，供排查召回质量 */
+  hits: string[]
+}
+
+/** 按来源板块聚合的一组报道 */
+export interface CorpusSection {
+  group: string
+  label: string
+  count: number
+}
+
+/** 一次舆情分析所覆盖的语料范围，用于向用户交代「分析了什么」 */
+export interface CorpusScope {
+  total: number
+  core: number
+  context: number
+  sourceCount: number
+  sections: CorpusSection[]
+  earliest?: number
+  latest?: number
+  /** 超出上限被舍弃的条数 */
+  dropped: number
+  /** 实际用于检索的扩展词 */
+  terms: EntityTerms
+}
+
+/** 舆情分析各阶段，供界面显示进度 */
+export type SentimentStage = 'expanding' | 'collecting' | 'digesting' | 'synthesizing'

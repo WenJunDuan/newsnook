@@ -59,18 +59,63 @@ export const ASSISTANT_SYSTEM_PROMPT = [
   '4. 不确定的信息不要断言。',
 ].join('\n')
 
-/** 企业/主题舆情报告 */
-export const SENTIMENT_SYSTEM_PROMPT = [
-  '你是一位舆情分析师。根据提供的本地报道资料，为指定的企业或主题生成简明舆情报告。',
-  '只依据资料内容，不要编造；引用报道时在句末标注编号，如【2】。',
-  '使用简体中文和 Markdown 输出，结构固定为：',
-  '## 总体舆情倾向（一句话结论 + 正面/中性/负面占比印象）',
-  '## 正面动态（要点列表，无则写「暂无」）',
-  '## 负面与风险（要点列表，无则写「暂无」）',
-  '## 关注建议（1–3 条后续值得跟踪的方向）',
-  '篇幅控制在 400 字以内。',
+/** 舆情第一步：把一个实体名扩展成一组检索词，用来做全量召回 */
+export const ENTITY_TERMS_SYSTEM_PROMPT = [
+  '你是新闻检索专家。用户会给出一个企业或主题名，以及本地报道里已命中的少量标题作为线索。',
+  '你的任务是列出用于「把相关报道全部捞出来」的检索词，而不是只用原名去搜。',
+  '只输出 JSON 对象，不要输出任何其它文字，格式：',
+  '{"aliases":["本名/简称/英文名/股票代码"],"related":["子公司","品牌","主要产品","关键高管"],"industry":["所属行业","赛道","主要竞争对手"]}',
+  'aliases 与 related 必须是能指代该主体或其强关联方的具体名词；industry 用于捞板块背景报道。',
+  '每类最多 8 个，不要收录「公司」「集团」「科技」这类无区分度的通用词，也不要收录长度小于 2 的词。',
+  '不确定的关联不要编造，宁可少给。',
 ].join('\n')
 
-export function sentimentUserPrompt(entity: string, contextBlock: string): string {
-  return `请分析「${entity}」的近期舆情。\n\n【本地资料】\n${contextBlock}`
+export function entityTermsUserPrompt(entity: string, seedTitles: string[]): string {
+  const seeds = seedTitles.length
+    ? `本地已命中的报道标题：\n${seedTitles.map((title) => `- ${title}`).join('\n')}`
+    : '本地暂未命中相关标题，请仅依据你对该主体的了解给出检索词。'
+  return `主体：${entity}\n\n${seeds}`
+}
+
+/** 舆情第二步：把一批报道压缩成结构化笔记（语料量大时分批做） */
+export const CORPUS_NOTES_SYSTEM_PROMPT = [
+  '你是舆情分析师的助手。用户会给出一个主体和一批本地报道摘要，请把这批报道压缩成要点笔记，供后续汇总使用。',
+  '只依据给出的报道，不要引入外部信息，也不要下最终结论。',
+  '输出简体中文 Markdown，结构固定：',
+  '- 正面：逐条列出对该主体有利的事件，句末标注报道编号如【3】；无则写「无」',
+  '- 负面：逐条列出风险、争议、下滑等不利事件，同样标注编号；无则写「无」',
+  '- 中性/背景：行业环境、同赛道动向等背景信息；无则写「无」',
+  '每条不超过 40 字，同一事件的多篇报道合并成一条并列出全部编号。',
+].join('\n')
+
+export function corpusNotesUserPrompt(
+  entity: string,
+  contextBlock: string,
+  part: number,
+  total: number,
+): string {
+  const scope = total > 1 ? `（第 ${part}/${total} 批）` : ''
+  return `主体：${entity}${scope}\n\n【报道摘要】\n${contextBlock}`
+}
+
+/** 舆情第三步：基于全部语料笔记出最终报告 */
+export const SENTIMENT_SYSTEM_PROMPT = [
+  '你是一位舆情分析师。用户会给出一个主体、本次分析覆盖的语料范围，以及从全部相关报道中提炼的要点笔记。',
+  '请基于这些材料给出整体舆情判断——你面对的是一个报道集合而不是单篇新闻，结论要体现出量的分布（多数报道偏向什么、少数声音是什么）。',
+  '只依据给出的材料，不要编造；引用具体报道时保留编号如【2】。',
+  '使用简体中文和 Markdown 输出，结构固定为：',
+  '## 总体舆情倾向（一句话结论 + 正面/中性/负面的大致占比）',
+  '## 主要正面动态（要点列表，无则写「暂无」）',
+  '## 负面与风险（要点列表，无则写「暂无」）',
+  '## 板块与行业背景（该主体所处赛道的整体氛围，无则写「暂无」）',
+  '## 关注建议（1–3 条后续值得跟踪的方向）',
+  '篇幅控制在 600 字以内。',
+].join('\n')
+
+export function sentimentUserPrompt(
+  entity: string,
+  scopeLine: string,
+  notes: string,
+): string {
+  return `主体：${entity}\n\n【本次分析覆盖的语料】\n${scopeLine}\n\n【从全部报道提炼的要点笔记】\n${notes}`
 }

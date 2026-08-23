@@ -12,6 +12,7 @@ import {
 import { MarkdownBody } from '../components/MarkdownBody'
 import { useReducedMotion } from '../hooks/useReducedMotion'
 import {
+  describeScope,
   parseSentimentCommand,
   runAssistantTurn,
   runSentimentReport,
@@ -19,7 +20,12 @@ import {
 import { isAiConfigured } from '../features/ai/config'
 import { loadArticlePool } from '../features/ai/pool'
 import { clearChatHistory, loadChatHistory, saveChatHistory } from '../features/ai/storage'
-import type { AiChatMessage, AiPrefs } from '../features/ai/types'
+import type {
+  AiChatMessage,
+  AiPrefs,
+  ChatArticleRef,
+  SentimentStage,
+} from '../features/ai/types'
 import type { Article } from '../lib/types'
 
 interface Props {
@@ -29,6 +35,14 @@ interface Props {
   onOpenArticle: (article: Article) => void
   onOpenAiSettings: () => void
   onBack: () => void
+}
+
+/** 舆情各阶段的界面文案 */
+const SENTIMENT_STAGE_TEXT: Record<SentimentStage, (detail?: string) => string> = {
+  expanding: () => '正在扩展检索词（别名 / 子公司 / 产品 / 行业）…',
+  collecting: () => '正在跨板块召回相关报道…',
+  digesting: (detail) => `正在分批归纳报道要点${detail ? `（${detail}）` : ''}…`,
+  synthesizing: () => '正在汇总成舆情报告…',
 }
 
 const QUICK_ACTIONS: { label: string; icon: typeof Sparkles; input: string; send: boolean }[] = [
@@ -54,6 +68,8 @@ export function AiAssistantScreen({
   const [messages, setMessages] = useState<AiChatMessage[]>(() => loadChatHistory())
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  /** 舆情是多阶段流程，把当前阶段回显出来 */
+  const [stageText, setStageText] = useState('')
   const [error, setError] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -93,24 +109,40 @@ export function AiAssistantScreen({
 
       try {
         const entity = parseSentimentCommand(text)
-        const result = entity
-          ? await runSentimentReport({
-              config: prefs.config,
-              pool,
-              entity,
-              signal: controller.signal,
-            })
-          : await runAssistantTurn({
-              config: prefs.config,
-              pool,
-              history: historyForTurn,
-              userInput: text,
-              signal: controller.signal,
-            })
+        let content: string
+        let refs: ChatArticleRef[]
+        let scopeText: string | undefined
+
+        if (entity) {
+          const report = await runSentimentReport({
+            config: prefs.config,
+            pool,
+            entity,
+            signal: controller.signal,
+            onStage: (stage, detail) => {
+              if (controller.signal.aborted) return
+              setStageText(SENTIMENT_STAGE_TEXT[stage](detail))
+            },
+          })
+          content = report.content
+          refs = report.refs
+          scopeText = report.scope ? describeScope(report.scope) : undefined
+        } else {
+          const turn = await runAssistantTurn({
+            config: prefs.config,
+            pool,
+            history: historyForTurn,
+            userInput: text,
+            signal: controller.signal,
+          })
+          content = turn.content
+          refs = turn.refs
+        }
+
         if (controller.signal.aborted) return
         setMessages((prev) => [
           ...prev,
-          { role: 'assistant', content: result.content, refs: result.refs, at: Date.now() },
+          { role: 'assistant', content, refs, scopeText, at: Date.now() },
         ])
       } catch (err) {
         if (controller.signal.aborted) return
@@ -118,6 +150,7 @@ export function AiAssistantScreen({
       } finally {
         if (abortRef.current === controller) abortRef.current = null
         setBusy(false)
+        setStageText('')
       }
     },
     [busy, configured, messages, pool, prefs.config],
@@ -171,6 +204,7 @@ export function AiAssistantScreen({
                     onClick={() => {
                       abortRef.current?.abort()
                       setBusy(false)
+                      setStageText('')
                       setMessages([])
                       setError('')
                       clearChatHistory()
@@ -248,6 +282,11 @@ export function AiAssistantScreen({
                     <div className="rounded-2xl rounded-bl-md border border-haze bg-ink-raised px-3.5 py-2.5">
                       <MarkdownBody markdown={message.content} />
                     </div>
+                    {message.scopeText && (
+                      <p className="mt-1.5 font-mono text-[10px] leading-relaxed text-paper-faint">
+                        语料范围 · {message.scopeText}
+                      </p>
+                    )}
                     {message.refs && message.refs.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {message.refs.map((ref) => (
@@ -273,7 +312,7 @@ export function AiAssistantScreen({
           {busy && (
             <div className="flex items-center gap-2 pt-4 text-[12.5px] text-paper-muted">
               <LoaderCircle size={14} className="animate-spin text-cinnabar-soft" />
-              正在检索本地报道并思考…
+              {stageText || '正在检索本地报道并思考…'}
             </div>
           )}
 

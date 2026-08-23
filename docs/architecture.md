@@ -240,9 +240,17 @@ ReaderScreen（只依赖 TranslationService）
      → assistant.ts 多轮问答，回答按【n】标注引用，可点回原文
    对话历史存 ai:chat:v1（60 条截断）
 
-4. 企业舆情（助手内输入「舆情：实体名」）
-   searchArticlesByEntity 精确子串检索 → 结构化 Markdown 舆情报告
-   （总体倾向 / 正面动态 / 负面与风险 / 关注建议）
+4. 企业舆情（助手内输入「舆情：实体名」）——语料聚合式，不是关键词搜索
+   ① 种子检索：searchArticlesByEntity 用本名捞出少量线索
+   ② 扩展检索词：AI 产出 aliases（别名/英文名/股票代码）
+      · related（子公司/品牌/产品/高管）· industry（行业/赛道/竞对）
+   ③ 全量召回：collectEntityCorpus 用全部扩展词扫整个池子并打分
+      命中 aliases/related → core（直接相关）；只命中 industry → context（板块背景）
+      拉丁词按词边界匹配，避免 CATL 命中 catalog；context 单独限额防止淹没主体
+   ④ 分板块统计：按 SOURCE_GROUP 汇总出 CorpusScope（篇数/信源数/板块分布/时间跨度/截断数）
+   ⑤ 分批归纳：语料 > 40 篇时切块，mapConcurrent(2) 各自压成要点笔记
+   ⑥ 汇总成报：总体倾向 / 正面动态 / 负面与风险 / 板块与行业背景 / 关注建议
+   界面按 SentimentStage 回显阶段，并在报告下方显示本次语料范围
 ```
 
 边界：无服务端、无默认 Key；发送内容仅限当次所需文章文本与标题级画像；`prompts.ts` 集中管理提示词；解读结果按模型缓存，换模型自动失效。
