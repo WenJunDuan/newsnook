@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict'
 
-import { citedRefs, parseSentimentCommand } from '../src/features/ai/assistant'
+import {
+  citedRefs,
+  describeScope,
+  parseEntityTerms,
+  parseSentimentCommand,
+} from '../src/features/ai/assistant'
 import { extractJsonPayload } from '../src/features/ai/client'
 import { DEFAULT_AI_PREFS, isAiConfigured, normalizeAiPrefs } from '../src/features/ai/config'
 import { parseDigestPayload } from '../src/features/ai/digest'
 import { buildInterestSnapshot } from '../src/features/ai/interest'
 import {
+  collectEntityCorpus,
   extractQueryTerms,
   searchArticles,
   searchArticlesByEntity,
@@ -202,6 +208,101 @@ console.log('Testing htmlToPlainText...')
   const truncated = htmlToPlainText(`<p>${'长'.repeat(50)}</p>`, 10)
   assert.equal(truncated.length, 11)
   assert.ok(truncated.endsWith('…'))
+}
+
+console.log('Testing parseEntityTerms...')
+{
+  const terms = parseEntityTerms(
+    {
+      aliases: ['CATL', 'catl', '300750', 'a', '公司'.repeat(20)],
+      related: ['麒麟电池', '曾毓群'],
+      industry: ['动力电池', '新能源车'],
+    },
+    '宁德时代',
+  )
+  // 主体本名模型没给，必须自动补进 aliases
+  assert.equal(terms.aliases[0], '宁德时代')
+  // 大小写重复只保留一个，过短/过长的词被丢弃
+  assert.equal(terms.aliases.filter((t) => t.toLowerCase() === 'catl').length, 1)
+  assert.ok(!terms.aliases.includes('a'))
+  assert.ok(terms.aliases.includes('300750'))
+  assert.deepEqual(terms.related, ['麒麟电池', '曾毓群'])
+
+  // 模型完全没返回可用内容时，至少还能用本名检索
+  const fallback = parseEntityTerms(null, '腾讯')
+  assert.deepEqual(fallback.aliases, ['腾讯'])
+  assert.deepEqual(fallback.related, [])
+}
+
+console.log('Testing collectEntityCorpus...')
+{
+  const pool = [
+    // 标题直接点名 → core，且权重最高
+    makeArticle({ id: 'c1', title: '宁德时代发布新一代麒麟电池', sourceId: 's1', sourceGroup: 'cn', publishedAt: 500 }),
+    // 标题没点名，但命中子公司/产品 → 仍然是 core（旧实现会漏掉这篇）
+    makeArticle({ id: 'c2', title: '麒麟电池量产进度曝光', sourceId: 's2', sourceGroup: 'tech', publishedAt: 400 }),
+    // 只命中别名（英文名）→ core
+    makeArticle({ id: 'c3', title: 'CATL expands European plant', sourceId: 's3', sourceGroup: 'intl', publishedAt: 300 }),
+    // 只命中行业词 → context（板块背景）
+    makeArticle({ id: 'c4', title: '动力电池装机量榜单出炉', summary: '新能源车渗透率继续走高', sourceId: 's4', sourceGroup: 'cn', publishedAt: 200 }),
+    // 完全无关 → 不入语料
+    makeArticle({ id: 'c5', title: '某地天气预报', sourceId: 's5', sourceGroup: 'cn', publishedAt: 100 }),
+  ]
+  const terms = {
+    aliases: ['宁德时代', 'CATL'],
+    related: ['麒麟电池'],
+    industry: ['动力电池', '新能源车'],
+  }
+  const corpus = collectEntityCorpus(pool, '宁德时代', terms)
+  const ids = corpus.articles.map((a) => a.id)
+
+  assert.ok(!ids.includes('c5'), '无关报道不应进入语料')
+  assert.ok(ids.includes('c2'), '命中产品词的报道必须召回（旧实现的主要缺陷）')
+  assert.ok(ids.includes('c3'), '命中英文别名的报道必须召回')
+  assert.equal(corpus.meta.get('c2')?.relevance, 'core')
+  assert.equal(corpus.meta.get('c4')?.relevance, 'context')
+  // 直接相关排在板块背景之前
+  assert.ok(ids.indexOf('c1') < ids.indexOf('c4'))
+
+  assert.equal(corpus.scope.core, 3)
+  assert.equal(corpus.scope.context, 1)
+  assert.equal(corpus.scope.sourceCount, 4)
+  // 跨板块统计：国内 / 科技 / 国际都要出现
+  const labels = corpus.scope.sections.map((s) => s.label)
+  assert.ok(labels.includes('国内') && labels.includes('国际'))
+
+  // 拉丁词按词边界匹配，不能让 CATL 命中 "catalog"
+  const noisePool = [makeArticle({ id: 'n1', title: 'Product catalog released' })]
+  const noise = collectEntityCorpus(noisePool, 'CATL', { aliases: ['CATL'], related: [], industry: [] })
+  assert.equal(noise.articles.length, 0)
+
+  // 上限与截断计数
+  const many = Array.from({ length: 30 }, (_, i) =>
+    makeArticle({ id: `m${i}`, title: `宁德时代动态 ${i}`, publishedAt: i }),
+  )
+  const capped = collectEntityCorpus(many, '宁德时代', terms, { maxArticles: 10 })
+  assert.equal(capped.articles.length, 10)
+  assert.equal(capped.scope.dropped, 20)
+}
+
+console.log('Testing describeScope...')
+{
+  const line = describeScope({
+    total: 87,
+    core: 60,
+    context: 27,
+    sourceCount: 23,
+    sections: [
+      { group: 'cn', label: '国内', count: 50 },
+      { group: 'intl', label: '国际', count: 37 },
+    ],
+    dropped: 5,
+    terms: { aliases: [], related: [], industry: [] },
+  })
+  assert.ok(line.includes('87 篇'))
+  assert.ok(line.includes('23 个信源'))
+  assert.ok(line.includes('国内 50 篇'))
+  assert.ok(line.includes('5 篇因超出分析上限未纳入'))
 }
 
 console.log('All AI feature tests passed.')

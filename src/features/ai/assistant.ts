@@ -1,13 +1,26 @@
+import { mapConcurrent } from '../../lib/asyncPool'
+import { chineseDate } from '../../lib/time'
 import type { Article } from '../../lib/types'
-import { chatComplete } from './client'
+import { chatComplete, extractJsonPayload } from './client'
 import {
   ASSISTANT_SYSTEM_PROMPT,
+  CORPUS_NOTES_SYSTEM_PROMPT,
+  corpusNotesUserPrompt,
+  ENTITY_TERMS_SYSTEM_PROMPT,
+  entityTermsUserPrompt,
   SENTIMENT_SYSTEM_PROMPT,
   sentimentUserPrompt,
 } from './prompts'
-import { searchArticles, searchArticlesByEntity } from './pool'
+import { collectEntityCorpus, searchArticles, searchArticlesByEntity } from './pool'
 import { articleBrief } from './text'
-import type { AiChatMessage, AiConfig, ChatArticleRef } from './types'
+import type {
+  AiChatMessage,
+  AiConfig,
+  ChatArticleRef,
+  CorpusScope,
+  EntityTerms,
+  SentimentStage,
+} from './types'
 
 /** 送入上下文的历史轮数与资料条数 */
 const HISTORY_TURNS = 6
@@ -87,31 +100,179 @@ export async function runAssistantTurn(input: {
   return { content, refs: citedRefs(content, context) }
 }
 
-/** 企业/主题舆情报告：实体检索 → 结构化 Markdown 报告 */
-export async function runSentimentReport(input: {
+// —— 舆情：全量语料聚合分析 ——
+
+/** 每批送模型归纳的报道条数；分批后再综合，避免一次塞爆上下文 */
+const CORPUS_CHUNK_SIZE = 40
+/** 归纳分批的并发上限，与翻译等模块保持同量级 */
+const NOTES_CONCURRENCY = 2
+
+function toTermList(value: unknown, max: number): string[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const terms: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const term = item.trim()
+    const key = term.toLowerCase()
+    if (term.length < 2 || term.length > 24 || seen.has(key)) continue
+    seen.add(key)
+    terms.push(term)
+    if (terms.length >= max) break
+  }
+  return terms
+}
+
+export function parseEntityTerms(raw: unknown, entity: string): EntityTerms {
+  const payload = (raw ?? {}) as { aliases?: unknown; related?: unknown; industry?: unknown }
+  const aliases = toTermList(payload.aliases, 8)
+  // 主体本名永远是检索词，模型漏给也要补上
+  if (!aliases.some((term) => term.toLowerCase() === entity.toLowerCase())) {
+    aliases.unshift(entity)
+  }
+  return {
+    aliases: aliases.slice(0, 9),
+    related: toTermList(payload.related, 8),
+    industry: toTermList(payload.industry, 8),
+  }
+}
+
+/** 把语料范围写成一句话，既喂给模型也回显给用户 */
+export function describeScope(scope: CorpusScope): string {
+  const sections = scope.sections.map((s) => `${s.label} ${s.count} 篇`).join(' · ')
+  const span =
+    scope.earliest && scope.latest
+      ? `${chineseDate(scope.earliest)} 至 ${chineseDate(scope.latest)}`
+      : '时间范围不详'
+  const parts = [
+    `共 ${scope.total} 篇报道（直接相关 ${scope.core} 篇，板块背景 ${scope.context} 篇）`,
+    `来自 ${scope.sourceCount} 个信源`,
+    sections ? `板块分布：${sections}` : '',
+    span,
+  ].filter(Boolean)
+  if (scope.dropped > 0) parts.push(`另有 ${scope.dropped} 篇因超出分析上限未纳入`)
+  return parts.join(' · ')
+}
+
+export interface SentimentReportInput {
   config: AiConfig
   pool: Article[]
   entity: string
   signal?: AbortSignal
-}): Promise<AssistantResult> {
-  const { config, pool, entity, signal } = input
-  const matches = searchArticlesByEntity(pool, entity, CONTEXT_ARTICLES)
-  if (!matches.length) {
+  onStage?: (stage: SentimentStage, detail?: string) => void
+}
+
+export interface SentimentReportResult extends AssistantResult {
+  scope?: CorpusScope
+}
+
+/**
+ * 企业/主题舆情：不是搜一次公司名就完事，而是
+ * 扩展检索词 → 跨板块全量召回 → 分批归纳 → 汇总成报告。
+ */
+export async function runSentimentReport(
+  input: SentimentReportInput,
+): Promise<SentimentReportResult> {
+  const { config, pool, entity, signal, onStage } = input
+
+  // 1. 先用本名做种子检索，给扩展词模型一点本地线索
+  const seeds = searchArticlesByEntity(pool, entity, 12)
+
+  // 2. 扩展检索词：别名 / 子公司 / 产品 / 高管 / 行业赛道
+  onStage?.('expanding')
+  let terms: EntityTerms = { aliases: [entity], related: [], industry: [] }
+  try {
+    const raw = await chatComplete(
+      config,
+      [
+        { role: 'system', content: ENTITY_TERMS_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: entityTermsUserPrompt(entity, seeds.map((article) => article.title)),
+        },
+      ],
+      { temperature: 0.2, signal },
+    )
+    terms = parseEntityTerms(extractJsonPayload(raw), entity)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    // 扩展失败不致命：退回只用本名检索，仍然比原来多做后面的聚合分析
+  }
+
+  // 3. 全量召回并按板块统计
+  onStage?.('collecting')
+  const corpus = collectEntityCorpus(pool, entity, terms)
+  if (!corpus.articles.length) {
     return {
-      content: `本地缓存中没有检索到与「${entity}」相关的报道。可以先刷新相关分类或频道，让列表缓存覆盖更多来源后再试。`,
+      content: `本地缓存中没有检索到与「${entity}」相关的报道。已尝试的检索词：${[
+        ...terms.aliases,
+        ...terms.related,
+        ...terms.industry,
+      ]
+        .slice(0, 12)
+        .join('、')}。可以先刷新相关分类或频道，让列表缓存覆盖更多来源后再试。`,
       refs: [],
     }
   }
 
+  const scopeLine = describeScope(corpus.scope)
+  const numbered = corpus.articles.map(
+    (article, index) => `【${index + 1}】${articleBrief(article, 120)}`,
+  )
+
+  // 4. 分批归纳：语料多时先压成要点笔记，再汇总
+  const chunks: string[][] = []
+  for (let i = 0; i < numbered.length; i += CORPUS_CHUNK_SIZE) {
+    chunks.push(numbered.slice(i, i + CORPUS_CHUNK_SIZE))
+  }
+
+  let notes: string
+  if (chunks.length === 1) {
+    notes = chunks[0].join('\n')
+  } else {
+    onStage?.('digesting', `0/${chunks.length}`)
+    let done = 0
+    const partNotes = await mapConcurrent(
+      chunks,
+      NOTES_CONCURRENCY,
+      async (chunk, index) =>
+        chatComplete(
+          config,
+          [
+            { role: 'system', content: CORPUS_NOTES_SYSTEM_PROMPT },
+            {
+              role: 'user',
+              content: corpusNotesUserPrompt(entity, chunk.join('\n'), index + 1, chunks.length),
+            },
+          ],
+          { temperature: 0.2, signal },
+        ),
+      signal,
+      () => {
+        done += 1
+        onStage?.('digesting', `${done}/${chunks.length}`)
+      },
+    )
+    notes = partNotes
+      .map((note, index) => `〔第 ${index + 1}/${chunks.length} 批要点〕\n${note}`)
+      .join('\n\n')
+  }
+
+  // 5. 汇总成报告
+  onStage?.('synthesizing')
   const content = await chatComplete(
     config,
     [
       { role: 'system', content: SENTIMENT_SYSTEM_PROMPT },
-      { role: 'user', content: sentimentUserPrompt(entity, contextBlock(matches)) },
+      { role: 'user', content: sentimentUserPrompt(entity, scopeLine, notes) },
     ],
     { temperature: 0.3, signal },
   )
 
-  const refs = citedRefs(content, matches)
-  return { content, refs: refs.length ? refs : toRefs(matches.slice(0, 6)) }
+  const cited = citedRefs(content, corpus.articles)
+  return {
+    content,
+    refs: cited.length ? cited : toRefs(corpus.articles.slice(0, 8)),
+    scope: corpus.scope,
+  }
 }

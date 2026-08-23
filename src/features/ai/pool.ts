@@ -1,5 +1,7 @@
 import { LIST_CACHE_PREFIX, listKeys, loadCachedList } from '../../lib/storage'
+import { SOURCE_GROUPS, SOURCE_GROUP_ORDER } from '../../sources/registry'
 import type { Article } from '../../lib/types'
+import type { CorpusArticle, CorpusScope, CorpusSection, EntityTerms } from './types'
 
 /** 助手检索池上限：覆盖全部信源近几日的列表缓存即可 */
 const MAX_POOL_ARTICLES = 1500
@@ -109,4 +111,166 @@ export function searchArticlesByEntity(pool: Article[], entity: string, limit = 
       return haystack.includes(needle) || haystack.toLowerCase().includes(lower)
     })
     .slice(0, limit)
+}
+
+// —— 舆情语料收集：从「搜一个公司名」升级为「把相关报道整体抓过来」 ——
+
+/**
+ * 单个检索词的匹配：中日韩用子串，纯拉丁词用词边界，
+ * 避免「AI」命中 said、「US」命中 use 这类噪音。
+ */
+function matchesTerm(haystack: string, lowerHaystack: string, term: string): boolean {
+  const needle = term.trim()
+  if (needle.length < 2) return false
+  if (/^[\x20-\x7e]+$/.test(needle)) {
+    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return new RegExp(`(^|[^a-z0-9])${escaped.toLowerCase()}($|[^a-z0-9])`, 'i').test(lowerHaystack)
+  }
+  return haystack.includes(needle)
+}
+
+interface TermWeight {
+  term: string
+  /** 命中标题的权重；命中摘要按六折计 */
+  weight: number
+  /** 命中即视为直接相关（而非板块背景） */
+  core: boolean
+}
+
+function buildTermWeights(terms: EntityTerms): TermWeight[] {
+  const weights: TermWeight[] = []
+  const seen = new Set<string>()
+  const push = (list: string[], weight: number, core: boolean) => {
+    for (const raw of list) {
+      const term = raw.trim()
+      const key = term.toLowerCase()
+      if (term.length < 2 || seen.has(key)) continue
+      seen.add(key)
+      weights.push({ term, weight, core })
+    }
+  }
+  push(terms.aliases, 100, true)
+  push(terms.related, 50, true)
+  push(terms.industry, 12, false)
+  return weights
+}
+
+export interface EntityCorpus {
+  entity: string
+  /** 已按相关度排序，core 在前 */
+  articles: Article[]
+  meta: Map<string, CorpusArticle>
+  scope: CorpusScope
+}
+
+export interface CollectCorpusOptions {
+  /** 语料总量上限，控制送模型的规模 */
+  maxArticles?: number
+  /** 板块背景类报道的上限，防止行业词把主体报道淹没 */
+  maxContext?: number
+}
+
+/**
+ * 按扩展检索词在整个本地池子里做全量召回，并标注每篇是「直接相关」还是「板块背景」。
+ * 与旧的 searchArticlesByEntity 的区别：不再只认公司名本身，
+ * 别名 / 子公司 / 产品 / 高管 命中同样算直接相关，行业与竞对词则带入板块背景。
+ */
+export function collectEntityCorpus(
+  pool: Article[],
+  entity: string,
+  terms: EntityTerms,
+  options?: CollectCorpusOptions,
+): EntityCorpus {
+  const maxArticles = options?.maxArticles ?? 160
+  const maxContext = options?.maxContext ?? 40
+  const weights = buildTermWeights(terms)
+
+  const core: { article: Article; meta: CorpusArticle }[] = []
+  const context: { article: Article; meta: CorpusArticle }[] = []
+
+  for (const article of pool) {
+    const title = article.title ?? ''
+    const summary = article.summary ?? ''
+    const haystack = `${title}\n${summary}`
+    const lowerHaystack = haystack.toLowerCase()
+    const lowerTitle = title.toLowerCase()
+
+    let score = 0
+    let isCore = false
+    const hits: string[] = []
+
+    for (const { term, weight, core: coreTerm } of weights) {
+      if (!matchesTerm(haystack, lowerHaystack, term)) continue
+      const inTitle = matchesTerm(title, lowerTitle, term)
+      score += inTitle ? weight : Math.round(weight * 0.6)
+      hits.push(term)
+      if (coreTerm) isCore = true
+    }
+
+    if (!hits.length) continue
+    // 只靠行业词命中的，要求命中面更广或词更具体，否则噪音太大
+    if (!isCore && hits.length < 2 && hits.every((term) => term.length <= 3)) continue
+
+    const meta: CorpusArticle = {
+      articleId: article.id,
+      relevance: isCore ? 'core' : 'context',
+      score,
+      hits,
+    }
+    ;(isCore ? core : context).push({ article, meta })
+  }
+
+  const byScore = (
+    a: { article: Article; meta: CorpusArticle },
+    b: { article: Article; meta: CorpusArticle },
+  ) => b.meta.score - a.meta.score || b.article.publishedAt - a.article.publishedAt
+
+  core.sort(byScore)
+  context.sort(byScore)
+
+  const keptContext = context.slice(0, Math.min(maxContext, Math.max(0, maxArticles - core.length)))
+  const keptCore = core.slice(0, maxArticles)
+  const kept = [...keptCore, ...keptContext].slice(0, maxArticles)
+  const dropped = core.length + context.length - kept.length
+
+  const meta = new Map(kept.map((item) => [item.article.id, item.meta]))
+  const articles = kept.map((item) => item.article)
+
+  const sectionCounts = new Map<string, number>()
+  const sources = new Set<string>()
+  let earliest: number | undefined
+  let latest: number | undefined
+  for (const article of articles) {
+    sectionCounts.set(article.sourceGroup, (sectionCounts.get(article.sourceGroup) ?? 0) + 1)
+    sources.add(article.sourceId)
+    if (article.hasRealDate) {
+      if (earliest === undefined || article.publishedAt < earliest) earliest = article.publishedAt
+      if (latest === undefined || article.publishedAt > latest) latest = article.publishedAt
+    }
+  }
+
+  const sections: CorpusSection[] = SOURCE_GROUP_ORDER.filter((group) =>
+    sectionCounts.has(group),
+  ).map((group) => ({
+    group,
+    label: SOURCE_GROUPS[group].title,
+    count: sectionCounts.get(group) ?? 0,
+  }))
+
+  return {
+    entity,
+    articles,
+    meta,
+    scope: {
+      total: articles.length,
+      core: kept.filter((item) => item.meta.relevance === 'core').length,
+      context: kept.filter((item) => item.meta.relevance === 'context').length,
+      sourceCount: sources.size,
+      sections,
+      earliest,
+      latest,
+      dropped,
+      terms,
+    },
+  }
 }
