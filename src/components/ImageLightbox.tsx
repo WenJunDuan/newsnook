@@ -387,7 +387,10 @@ export function ImageLightbox({ src, alt = '', onClose, overlayCloserRef }: Prop
       className="fixed inset-0 z-[80] flex flex-col bg-ink/95"
       style={{ touchAction: 'none' }}
     >
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-end pt-[var(--sat)]">
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-end"
+        style={{ paddingTop: 'var(--sat)' }}
+      >
         <button
           type="button"
           onClick={onClose}
@@ -428,7 +431,9 @@ export function ImageLightbox({ src, alt = '', onClose, overlayCloserRef }: Prop
         />
       </div>
 
-      <p className="pointer-events-none pb-[max(var(--sab),12px)] text-center font-mono text-[10px] tracking-[0.14em] text-paper-faint">
+      <p
+        className="pointer-events-none text-center font-mono text-[10px] tracking-[0.14em] text-paper-faint safe-pb-12"
+      >
         长按保存或分享 · 双指缩放 · 下滑关闭
       </p>
 
@@ -444,7 +449,9 @@ export function ImageLightbox({ src, alt = '', onClose, overlayCloserRef }: Prop
               setStatus(null)
             }}
           />
-          <div className="border-t border-haze bg-ink-raised px-4 pt-3 pb-[max(var(--sab),16px)]">
+          <div
+            className="border-t border-haze bg-ink-raised px-4 pt-3 safe-pb-16"
+          >
             <p className="mb-3 font-mono text-[10px] tracking-[0.16em] text-paper-faint">图片操作</p>
             <div className="grid gap-2">
               <button

@@ -285,10 +285,10 @@
 /* 安全区变量：优先取 Android 原生注入的高度，回退取 CSS env() */
 /* Chrome < 79 不支持 max()，先给 fallback，再用 @supports 覆盖 */
 :root {
-  --sat: var(--sat-native, 0px);
-  --sab: var(--sab-native, 0px);
-  --sal: var(--sal-native, 0px);
-  --sar: var(--sar-native, 0px);
+  --sat: var(--sat-native, env(safe-area-inset-top, 0px));
+  --sab: var(--sab-native, env(safe-area-inset-bottom, 0px));
+  --sal: var(--sal-native, env(safe-area-inset-left, 0px));
+  --sar: var(--sar-native, env(safe-area-inset-right, 0px));
 }
 @supports (width: max(1px, 2px)) {
   :root {
@@ -298,6 +298,25 @@
     --sar: max(var(--sar-native, 0px), env(safe-area-inset-right, 0px));
   }
 }
+
+/*
+ * 全屏播放器与普通 App 壳使用不同的安全区语义。普通页面要避开系统栏；
+ * 沉浸式视频已经隐藏系统栏，只避开真实 display cutout。这样不会把横屏前
+ * 记录下来的状态栏高度/侧边导航栏宽度再次叠到播放器控制区。
+ */
+:root {
+  --video-sat: var(--video-sat-native, env(safe-area-inset-top, 0px));
+  --video-sab: var(--video-sab-native, env(safe-area-inset-bottom, 0px));
+  --video-sal: var(--video-sal-native, env(safe-area-inset-left, 0px));
+  --video-sar: var(--video-sar-native, env(safe-area-inset-right, 0px));
+}
+
+/* Chrome < 79 以及部分存在 max() 嵌套 bug 的内核：统一改用极度健壮的 calc() 叠加安全区，替代 max() */
+.safe-pb-8 { padding-bottom: calc(var(--sab) + 8px); }
+.safe-pb-12 { padding-bottom: calc(var(--sab) + 12px); }
+.safe-pb-16 { padding-bottom: calc(var(--sab) + 16px); }
+.safe-pb-24 { padding-bottom: calc(var(--sab) + 24px); }
+.safe-bottom-20 { bottom: calc(var(--sab) + 20px); }
 
 /* 阅读排版：默认值写在这里，用户偏好在运行时覆盖同名变量 */
 :root {
@@ -369,6 +388,32 @@
     border-color 240ms var(--ease-ink),
     color 240ms var(--ease-ink),
     fill 240ms var(--ease-ink);
+}
+
+/* 预设切换抽屉：只用 translateY，避免 scale + 全屏 blur 在 WebView 上卡首帧 */
+@keyframes preset-switcher-in {
+  from {
+    opacity: 0.85;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.preset-switcher-sheet {
+  animation: preset-switcher-in 160ms var(--ease-ink) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preset-switcher-sheet {
+    animation: none;
+  }
+}
+
+html[data-eink='1'] .preset-switcher-sheet {
+  animation: none;
 }
 
 @layer utilities {
@@ -641,6 +686,96 @@
   color: var(--color-paper);
 }
 
+.reader-prose [data-reader-role='related'] {
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--color-haze);
+}
+
+.reader-prose [data-reader-role='related'] h2 {
+  margin: 0 0 0.85em;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  color: var(--color-paper-muted);
+}
+
+/* 相关推荐：样式挂在 data-reader-role，避免正文消毒剥掉 class 后退化成文字链接 */
+.reader-prose [data-reader-role='related'] .reader-related-grid,
+.reader-prose [data-reader-role='related-grid'] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.reader-prose [data-reader-role='related'] a.reader-related-card,
+.reader-prose a[data-reader-role='related-item'] {
+  display: block;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--color-haze) 50%, transparent);
+  border-radius: 0.75rem;
+  background: color-mix(in oklab, var(--color-paper) 5%, transparent);
+  color: var(--color-paper);
+  text-decoration: none;
+  border-bottom: none;
+  overflow-wrap: normal;
+  word-break: normal;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.reader-prose [data-reader-role='related'] a.reader-related-card:hover,
+.reader-prose a[data-reader-role='related-item']:hover {
+  border-color: color-mix(in oklab, var(--color-cinnabar) 30%, transparent);
+  background: color-mix(in oklab, var(--color-paper) 10%, transparent);
+  color: var(--color-paper);
+}
+
+.reader-prose [data-reader-role='related'] .reader-related-card__media,
+.reader-prose [data-reader-role='related-media'] {
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: var(--color-ink);
+  width: 100%;
+}
+
+.reader-prose [data-reader-role='related'] .reader-related-card__media--empty,
+.reader-prose [data-reader-role='related-media'][data-empty='true'] {
+  background: color-mix(in oklab, var(--color-haze) 35%, var(--color-ink));
+}
+
+.reader-prose [data-reader-role='related'] .reader-related-card__media img,
+.reader-prose [data-reader-role='related-media'] img {
+  display: block;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  border-radius: 0;
+  object-fit: cover;
+  cursor: default;
+}
+
+.reader-prose [data-reader-role='related'] .reader-related-card__body,
+.reader-prose [data-reader-role='related-body'] {
+  padding: 0.625rem;
+}
+
+.reader-prose [data-reader-role='related'] .reader-related-card__title,
+.reader-prose [data-reader-role='related-title'] {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--color-paper);
+}
+
 /* 阅读页大标题跟随正文字号缩放 */
 .reader-title {
   font-family: var(--font-display);
@@ -803,6 +938,43 @@
 }
 .ink-video-abs-center:active {
   transform: translate(-50%, -50%) scale(0.95);
+}
+
+/*
+ * 与上面的播放键同理：Tailwind v4 的 -translate-y-* 会编译成 Chrome 104+
+ * 才支持的独立 translate 属性。进度轨必须使用经典 transform，兼容
+ * Android WebView 69+。
+ */
+.ink-video-y-center {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/*
+ * Player chrome is not application chrome. In landscape fullscreen, a punch-hole
+ * on the short edge can report a large safeInsetLeft/Right even though the top and
+ * bottom control rows never intersect that cutout. Applying the app-wide --sal/--sar
+ * to the whole row therefore produces the visibly asymmetric layout.
+ *
+ * Keep landscape controls symmetric. Portrait fullscreen only keeps the physical
+ * top/bottom cutout inset, where a centered notch can actually overlap the row.
+ */
+.ink-video-top-chrome {
+  padding: 0.5rem 0.625rem 2rem;
+}
+
+.ink-video-bottom-chrome {
+  padding: 3rem 1rem 0.25rem;
+}
+
+@media (orientation: portrait) {
+  [data-video-fullscreen='true'] .ink-video-top-chrome {
+    padding-top: calc(var(--video-sat, 0px) + 0.5rem);
+  }
+
+  [data-video-fullscreen='true'] .ink-video-bottom-chrome {
+    padding-bottom: calc(var(--video-sab, 0px) + 0.5rem);
+  }
 }
 
 /* 视频稿在嗅探完成前也保留真实播放器的空间，避免正文突然上移。 */
@@ -1268,6 +1440,8 @@ button.reader-youtube-action {
 
 /* 自定义播放器进度条：隐藏原生轨道，只保留可点的拇指区域 */
 .ink-seek {
+  -webkit-appearance: none;
+  appearance: none;
   margin: 0;
   height: 100%;
 }

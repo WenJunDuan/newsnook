@@ -2,7 +2,7 @@
 
 > 适用项目：News Nook（React + Vite + Capacitor 8 + Android）  
 > 主要环境：Windows PowerShell  
-> 更新日期：2026-08-02
+> 更新日期：2026-08-19
 
 ## 1. 目标
 
@@ -250,19 +250,30 @@ node scripts/android-cap.mjs run android `
 
 ## 9. 实时查看 Logcat
 
-应用启动后执行：
+模拟器调试的关键步骤：应用启动后，先用 `adb devices` 确认设备在线，再用一条命令把应用进程的 PID 直接传给 logcat。
+
+```powershell
+adb devices
+
+adb -s emulator-5554 logcat --pid=$(adb -s emulator-5554 shell pidof -s com.aizeek.newsnook)
+```
+
+`emulator-5554` 替换为 `adb devices` 输出的实际设备 ID；`pidof -s` 只返回单个进程 PID。
+
+如果 `adb` 不在 PATH 中，使用完整路径分步执行：
 
 ```powershell
 $adbPath = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$appProcessId = & $adbPath -s "设备 ID" shell pidof com.aizeek.newsnook
+& $adbPath devices -l
 
+$appProcessId = & $adbPath -s "设备 ID" shell pidof -s com.aizeek.newsnook
 & $adbPath -s "设备 ID" logcat --pid=$appProcessId -v color
 ```
 
 如果只有一个设备，可以省略 `-s`：
 
 ```powershell
-$appProcessId = & $adbPath shell pidof com.aizeek.newsnook
+$appProcessId = & $adbPath shell pidof -s com.aizeek.newsnook
 & $adbPath logcat --pid=$appProcessId -v color
 ```
 
@@ -417,6 +428,11 @@ chrome://inspect/#devices
 $adbPath = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 & $adbPath devices -l
 node scripts/android-cap.mjs run android --list
+```
+
+```powershell
+# 跟踪应用日志（emulator-5554 换成实际设备 ID）
+adb -s emulator-5554 logcat --pid=$(adb -s emulator-5554 shell pidof -s com.aizeek.newsnook)
 ```
 
 ## 15. 官方参考

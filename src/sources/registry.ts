@@ -10,6 +10,7 @@ import {
   catalogMaxOffsetPages,
   catalogUsesOffsetPaging,
 } from '../features/catalogEngine/pagination'
+import { frameworkPageUrl } from '../features/frameworkDetect/buildPageUrl'
 import { md5Hex, sha1Hex } from '../lib/hash'
 
 export type SourceGroup = 'cn' | 'intl' | 'tech' | 'ai' | 'special' | 'custom'
@@ -64,6 +65,8 @@ export interface NewsSource {
   isCustom?: boolean
   /** 自建时间戳 */
   createdAt?: number
+  /** CMS 框架探测结果（仅自定义 web-catalog 源） */
+  frameworkHint?: import('../features/frameworkDetect/types').FrameworkHint
 }
 
 export const SOURCE_GROUPS: Record<SourceGroup, { title: string; caption: string }> = {
@@ -793,6 +796,9 @@ export function offsetPageRequest(source: NewsSource, page: number): OffsetPageR
   }
 
   if (source.kind === 'web-catalog') {
+    if (source.frameworkHint) {
+      return { url: frameworkPageUrl(source.url, safePage, source.frameworkHint.paginationPattern) }
+    }
     return { url: buildCatalogPageUrl(source.url, safePage) }
   }
 
@@ -818,6 +824,7 @@ export function pagingStrategyOf(source: NewsSource): PagingStrategy {
   if (source.kind === 'eastmoney-kx') return 'upstream-offset'
   if (source.kind === 'zhihu') return 'upstream-cursor'
   if (source.kind === 'web-catalog') {
+    if (source.frameworkHint) return 'upstream-offset'
     return catalogUsesOffsetPaging(source.url) ? 'upstream-offset' : 'client-catalog'
   }
   return 'client-catalog'

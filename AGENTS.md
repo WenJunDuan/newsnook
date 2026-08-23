@@ -75,6 +75,7 @@ newsnook/
 | 墨水屏 | `lib/eink.ts` · `hooks/usePagedReader.ts` · `index.css` 中 `[data-eink]` |
 | 主题 / 排版 | `lib/theme.ts`（明暗 + 风格方案注册表） · `lib/customScheme.ts`（自定义配色推导） · `sources/preferences.ts` · `index.css`（`data-scheme` 方案块） |
 | 应用更新 | `features/appUpdate/` |
+| 日志 / 调试输出 | `lib/logger.ts`（`log.*` 命名空间；禁止 `src/` 直接 `console.*`） |
 | Android 构建 / 签名 | `docs/android-build.md` · `scripts/android-*.mjs` |
 | 产品设计背景 | `docs/superpowers/specs/` |
 
@@ -90,6 +91,7 @@ newsnook/
 5. **翻译**：Reader 只依赖 `TranslationService`；`cloud` 变体对 ML Kit/Bergamot 给空实现，勿把 JNI 逻辑编进轻量包。
 6. **持久化前缀** `newsnook:`，见 `lib/storage.ts`；小配置可镜像 Capacitor Preferences，大缓存走 localStorage。
 7. **依赖方向**：UI 不直接拼上游 URL；不要在 `components/` 里硬编码源协议细节。
+8. **日志**：`src/` 业务代码统一走 `lib/logger.ts` 的 `log.<namespace>`；`scripts/` 测试脚本可继续 `console.log` 输出结果。
 
 ## 5. AI 工作规范
 
@@ -110,6 +112,7 @@ newsnook/
 - 不要为了「优雅」引入新的全局状态库或路由库，除非任务明确要求且已讨论。
 - 不要删除或弱化现有 `test:*` 来让检查通过。
 - 不要在公开回复中展开可利用的安全细节；安全流程见 [`SECURITY.md`](./SECURITY.md)。
+- 不要在 `src/` 直接写 `console.*`；用 `log.http` / `log.sniffer` 等（仅 `lib/logger.ts` 内部可调 `console`）。
 
 ### 5.3 功能边界提示
 
@@ -121,6 +124,29 @@ newsnook/
 | 新跟贴源 | 实现 `CommentProvider`，在 `comments/service` 注册 |
 | UI 文案 | 与现有「我的 / 设置」语气一致；避免营销腔与平台化话术 |
 | 墨水屏 | 行为叠加在 `einkMode` 上，不是第三套主题色；关闭后须零残留 |
+| 调试日志 | 见 **5.4**；新增模块优先复用已有命名空间，必要时在 `LogNamespace` 扩展 |
+
+### 5.4 日志（`lib/logger.ts`）
+
+**级别**（阈值，从安静到详细）：`silent` < `error` < `warn` < `info` < `debug` < `trace`。  
+设 `level: 'warn'` 时只输出 `error` 与 `warn`；`info`/`debug`/`trace` 被丢弃。
+
+**默认**：Vite 开发态（`import.meta.env.DEV`）→ `debug`；正式 APK / Web 生产构建 → `warn`。  
+正式版默认 `warn` 的原因：避免 logcat 被 HTTP/嗅探等调试信息刷屏、减少性能与隐私泄露风险，同时仍保留存储失败、翻译分块失败等可行动告警。
+
+**命名空间**（分模块开关）：`app` · `boot` · `catalog` · `feed` · `http` · `proxy` · `reader` · `sniffer` · `storage` · `translation`。  
+`namespaces` 里显式 `false` 关闭单模块；未列出则默认启用。
+
+**运行时覆盖**（不改代码、不重打包）：
+
+```javascript
+__newsnookLog.setLevel('trace')
+__newsnookLog.enable('http'); __newsnookLog.disable('sniffer')
+localStorage.setItem('newsnook:log', JSON.stringify({ level: 'debug', namespaces: { http: true } }))
+// Web：?log=debug&logNs=http,-sniffer
+```
+
+**代码约定**：`import { log } from '../lib/logger'` → `log.http.debug(...)`；临时调试结束后勿留 `trace`/`debug` 热路径日志。oxlint 对 `src/**` 启用 `no-console`。
 
 ## 6. 常用命令
 
@@ -138,6 +164,7 @@ npm run test:proxy
 npm run test:custom-sources
 npm run test:eink
 npm run test:ai
+npm run test:logger
 
 npm run android:run         # 轻量 cloud
 npm run android:run:local   # 完整 local（Bergamot 需先 bergamot:init）

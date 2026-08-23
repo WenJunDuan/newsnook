@@ -68,9 +68,9 @@ assert.deepEqual(snap.enabledSourceIds, ['ithome'])
 const { nextPrefs: prefsWithCustomRss, newSourceId: customRssId } = addCustomSource(
   DEFAULT_PREFERENCES,
   {
-    name: '91porn.com',
-    label: '91',
-    url: 'https://91porn.com/index.php',
+    name: 'example.com',
+    label: '示例',
+    url: 'https://example.com/index.php',
   },
 )
 const { nextPrefs: prefsCustomLayout, newCategoryId: customCatId } = addCustomCategory(
@@ -86,7 +86,7 @@ assert.ok(customSnap.categoryOrder.includes(customCatId))
 
 const restoredPrefs = applySnapshotToPrefs(prefsCustomLayout, customSnap)
 assert.deepEqual(categorySourceIds(customCatId, restoredPrefs), [customRssId])
-assert.equal(resolveCategory(customCatId, restoredPrefs).caption, '91')
+assert.equal(resolveCategory(customCatId, restoredPrefs).caption, '示例')
 
 const ghostCustomSnap = normalizeSnapshot({
   customCategories: [

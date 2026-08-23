@@ -13,6 +13,8 @@ export interface SourcePagingState {
   page?: number
   cursor?: string
   error?: string
+  /** next-link 翻页：从上一页 HTML 中提取的下一页 URL */
+  nextUrl?: string
 }
 
 export function summarizePagination(

@@ -29,10 +29,26 @@ public class MainActivity extends BridgeActivity {
 
     /** 系统开屏一直挂到 WebView 提交首帧，避免撤出后露出默认白底 WebView */
     private volatile boolean webContentReady = false;
+    /** 视频全屏态：系统栏必须持续隐藏。旋转 / 重新获焦后隐藏状态可能被系统复位，需要主动补隐藏 */
+    private volatile boolean videoFullscreenActive = false;
+    /** 自愈重排标志：同一窗口期内只排一次补隐藏，避免叠加（仅主线程读写） */
+    private boolean reHideScheduled = false;
     private int nativeStatusBarDp = 0;
     private int nativeNavBarDp = 0;
     private int nativeLeftInsetDp = 0;
     private int nativeRightInsetDp = 0;
+    /** 全屏播放器只避让真实屏幕切口，不继承已隐藏的状态栏/导航栏尺寸。 */
+    private int nativeVideoTopInsetDp = 0;
+    private int nativeVideoBottomInsetDp = 0;
+    private int nativeVideoLeftInsetDp = 0;
+    private int nativeVideoRightInsetDp = 0;
+
+    private final Handler systemBarsHandler = new Handler(Looper.getMainLooper());
+    private final Runnable reHideSystemBars = () -> {
+        if (videoFullscreenActive) {
+            hideSystemBarsSticky();
+        }
+    };
 
     private final Handler compositorWakeHandler = new Handler(Looper.getMainLooper());
 
@@ -50,12 +66,15 @@ public class MainActivity extends BridgeActivity {
         wakeWebViewCompositor(webView, false);
     };
 
+    @androidx.annotation.Keep
     public class NativeThemeBridge {
+        @androidx.annotation.Keep
         @JavascriptInterface
         public void setSystemTheme(String theme) {
             runOnUiThread(() -> applySystemTheme("light".equalsIgnoreCase(theme)));
         }
 
+        @androidx.annotation.Keep
         @JavascriptInterface
         public void setFullScreen(boolean fullScreen) {
             runOnUiThread(() -> applyFullScreen(fullScreen));
@@ -67,6 +86,7 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    @androidx.annotation.Keep
     private void applySystemTheme(boolean isLight) {
         Window window = getWindow();
         if (window == null) return;
@@ -77,30 +97,135 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    @androidx.annotation.Keep
     private void applyFullScreen(boolean fullScreen) {
-        Window window = getWindow();
-        if (window == null) return;
-        View decorView = window.getDecorView();
-        WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, decorView);
-        if (controller == null) return;
+        setVideoFullscreen(fullScreen);
+    }
 
+    /** Package-visible entry point used by DeviceMediaControlsPlugin. */
+    void setVideoFullscreen(boolean fullScreen) {
+        videoFullscreenActive = fullScreen;
         if (fullScreen) {
-            controller.hide(WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.navigationBars());
-            controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-            // 勿在 enter 时 requestApplyInsets：Pixel 等机会在 insets 回传后把系统栏又显示出来
-            decorView.post(() -> {
-                controller.hide(WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.navigationBars());
-                controller.setSystemBarsBehavior(
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                );
-            });
+            hideSystemBarsSticky();
+            scheduleFullscreenReassert();
             return;
         }
 
-        // 退出沉浸态时复位 behavior，避免部分机型 show() 后仍被 transient 策略吃掉
-        controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_DEFAULT);
-        controller.show(WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.navigationBars());
+        cancelFullscreenReassert();
+        showSystemBars();
+    }
+
+
+    private void scheduleFullscreenReassert() {
+        cancelFullscreenReassert();
+        Window window = getWindow();
+        if (window == null) return;
+        View decorView = window.getDecorView();
+
+        // Rotation and OEM window relayouts can make bars visible one or two frames
+        // after the initial hide. Reassert across that short transition window.
+        decorView.postOnAnimation(reHideSystemBars);
+        systemBarsHandler.postDelayed(reHideSystemBars, 64L);
+        systemBarsHandler.postDelayed(reHideSystemBars, 180L);
+        systemBarsHandler.postDelayed(reHideSystemBars, 420L);
+    }
+
+    private void cancelFullscreenReassert() {
+        systemBarsHandler.removeCallbacks(reHideSystemBars);
+        Window window = getWindow();
+        if (window != null) {
+            window.getDecorView().removeCallbacks(reHideSystemBars);
+        }
+    }
+
+    @androidx.annotation.Keep
+    private void hideSystemBarsSticky() {
+        Window window = getWindow();
+        if (window == null) return;
+        View decorView = window.getDecorView();
+
+        // BridgeActivity changes the theme/content view during super.onCreate().
+        // Reassert edge-to-edge whenever immersive mode is applied.
+        WindowCompat.setDecorFitsSystemWindows(window, false);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.view.WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) {
+                controller.setSystemBarsBehavior(
+                    android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                );
+                controller.hide(android.view.WindowInsets.Type.systemBars());
+                return;
+            }
+
+            // Extremely defensive fallback for OEM windows that temporarily expose
+            // no framework controller during a configuration transition.
+            WindowInsetsControllerCompat compat = WindowCompat.getInsetsController(window, decorView);
+            if (compat != null) {
+                compat.setSystemBarsBehavior(
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                );
+                compat.hide(WindowInsetsCompat.Type.systemBars());
+            }
+            return;
+        }
+
+        // API 24-29: use the platform's legacy immersive-sticky contract directly.
+        // This is what WindowInsetsControllerCompat ultimately maps to on these APIs,
+        // but setting the complete flag set at once avoids OEM partial-state resets.
+        int flags = View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_FULLSCREEN;
+        decorView.setSystemUiVisibility(flags);
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
+    }
+
+    private void showSystemBars() {
+        Window window = getWindow();
+        if (window == null) return;
+        View decorView = window.getDecorView();
+        WindowCompat.setDecorFitsSystemWindows(window, false);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.view.WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) {
+                controller.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_DEFAULT);
+                controller.show(android.view.WindowInsets.Type.systemBars());
+            } else {
+                WindowInsetsControllerCompat compat = WindowCompat.getInsetsController(window, decorView);
+                if (compat != null) {
+                    compat.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_DEFAULT);
+                    compat.show(WindowInsetsCompat.Type.systemBars());
+                }
+            }
+        } else {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            decorView.setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            );
+        }
+
         ViewCompat.requestApplyInsets(decorView);
+    }
+
+    /**
+     * 自愈：视频全屏期间若系统栏被任何因素重新显示（旧版 systemUiVisibility 写入、
+     * OEM 旋转 / 焦点复位等），延迟后重藏。延迟是为了不与「swipe 临时唤回」的
+     * 系统自动隐藏互相打架；窗口失焦时不干预。
+     */
+    private void scheduleSelfHealHide() {
+        if (reHideScheduled) return;
+        reHideScheduled = true;
+        getWindow().getDecorView().postDelayed(() -> {
+            reHideScheduled = false;
+            if (!videoFullscreenActive) return;
+            scheduleFullscreenReassert();
+        }, 500L);
     }
 
     private void applyKeepScreenOn(boolean keepScreenOn) {
@@ -113,12 +238,9 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
-        splashScreen.setKeepOnScreenCondition(() -> !webContentReady);
-
+    private void configureEdgeToEdgeWindow() {
         Window window = getWindow();
+        if (window == null) return;
         WindowCompat.setDecorFitsSystemWindows(window, false);
         window.setStatusBarColor(Color.TRANSPARENT);
         window.setNavigationBarColor(Color.TRANSPARENT);
@@ -126,9 +248,24 @@ public class MainActivity extends BridgeActivity {
             window.setStatusBarContrastEnforced(false);
             window.setNavigationBarContrastEnforced(false);
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            android.view.WindowManager.LayoutParams lp = window.getAttributes();
+            lp.layoutInDisplayCutoutMode =
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            window.setAttributes(lp);
+        }
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
+        splashScreen.setKeepOnScreenCondition(() -> !webContentReady);
+
+        configureEdgeToEdgeWindow();
 
         TranslationPluginRegistrar.register(this);
         registerPlugin(DeviceMediaControlsPlugin.class);
+        registerPlugin(DlnaCastPlugin.class);
         registerPlugin(VolumePageTurnPlugin.class);
         registerPlugin(ProxiedHttpPlugin.class);
         registerPlugin(MediaSnifferPlugin.class);
@@ -161,6 +298,10 @@ public class MainActivity extends BridgeActivity {
         );
         super.onCreate(savedInstanceState);
 
+        // BridgeActivity switches to Capacitor's no-action-bar theme and installs
+        // its content view in super.onCreate(); reassert our window contract after it.
+        configureEdgeToEdgeWindow();
+
         // 外部媒体仍由 WebView 播放；仅已登记的媒体会话走流式请求上下文桥接。
         if (bridge != null) {
             bridge.setWebViewClient(new MediaPlaybackWebViewClient(bridge));
@@ -169,6 +310,13 @@ public class MainActivity extends BridgeActivity {
         View decorView = getWindow().getDecorView();
         ViewCompat.setOnApplyWindowInsetsListener(decorView, (v, insets) -> {
             updateNativeInsets(insets);
+            if (
+                videoFullscreenActive
+                    && (insets.isVisible(WindowInsetsCompat.Type.statusBars())
+                        || insets.isVisible(WindowInsetsCompat.Type.navigationBars()))
+            ) {
+                scheduleSelfHealHide();
+            }
             return ViewCompat.onApplyWindowInsets(v, insets);
         });
         updateNativeInsets(null);
@@ -204,6 +352,10 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
 
+        if (videoFullscreenActive) {
+            scheduleFullscreenReassert();
+        }
+
         WebView webView = getCapacitorWebView();
         if (webView == null) return;
 
@@ -222,6 +374,8 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onDestroy() {
         cancelScheduledCompositorWake();
+        cancelFullscreenReassert();
+        videoFullscreenActive = false;
         super.onDestroy();
     }
 
@@ -230,6 +384,11 @@ public class MainActivity extends BridgeActivity {
         super.onWindowFocusChanged(hasFocus);
         if (!hasFocus) return;
 
+        // 重新获焦时若仍处视频全屏，系统栏隐藏状态可能已被复位，补一次隐藏
+        if (videoFullscreenActive) {
+            scheduleFullscreenReassert();
+        }
+
         // onResume may run before the WebView's surface is visible again. One immediate
         // synthetic touch here; delayed soft kicks from scheduleCompositorWake cover lag.
         WebView webView = getCapacitorWebView();
@@ -237,6 +396,17 @@ public class MainActivity extends BridgeActivity {
             webView.resumeTimers();
             injectNativeInsets();
             wakeWebViewCompositor(webView, true);
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // manifest 已声明 orientation 等 configChanges，Activity 不重建；
+        // 但部分机型旋转后 insets controller 的隐藏状态会丢，视频全屏期间必须补隐藏
+        if (videoFullscreenActive) {
+            configureEdgeToEdgeWindow();
+            scheduleFullscreenReassert();
         }
     }
 
@@ -266,19 +436,31 @@ public class MainActivity extends BridgeActivity {
         int navBarPx = 0;
         int leftInsetPx = 0;
         int rightInsetPx = 0;
+        int cutoutTopPx = 0;
+        int cutoutBottomPx = 0;
+        int cutoutLeftPx = 0;
+        int cutoutRightPx = 0;
 
         if (windowInsets != null) {
-            Insets statusInsets = windowInsets.getInsets(
-                WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.displayCutout()
-            );
-            statusBarPx = statusInsets.top;
+            Insets statusInsets = windowInsets.getInsets(WindowInsetsCompat.Type.statusBars());
             Insets navInsets = windowInsets.getInsets(WindowInsetsCompat.Type.navigationBars());
-            navBarPx = navInsets.bottom;
-            leftInsetPx = Math.max(statusInsets.left, navInsets.left);
-            rightInsetPx = Math.max(statusInsets.right, navInsets.right);
+            Insets cutoutInsets = windowInsets.getInsets(WindowInsetsCompat.Type.displayCutout());
+
+            cutoutTopPx = cutoutInsets.top;
+            cutoutBottomPx = cutoutInsets.bottom;
+            cutoutLeftPx = cutoutInsets.left;
+            cutoutRightPx = cutoutInsets.right;
+
+            statusBarPx = Math.max(statusInsets.top, cutoutTopPx);
+            navBarPx = Math.max(navInsets.bottom, cutoutBottomPx);
+            leftInsetPx = Math.max(Math.max(statusInsets.left, navInsets.left), cutoutLeftPx);
+            rightInsetPx = Math.max(Math.max(statusInsets.right, navInsets.right), cutoutRightPx);
         }
 
-        if (statusBarPx <= 0) {
+        // 只在尚未收到任何 WindowInsets 的启动阶段使用资源兜底。
+        // 全屏后 statusBars() 正确返回 0 时绝不能再把 status_bar_height 填回来，
+        // 否则 Web 端 --sat 会永久保留一条“幽灵通知栏”的高度。
+        if (windowInsets == null && statusBarPx <= 0) {
             int resourceId = getResources().getIdentifier("status_bar_height", "dimen", "android");
             if (resourceId > 0) {
                 statusBarPx = getResources().getDimensionPixelSize(resourceId);
@@ -289,6 +471,12 @@ public class MainActivity extends BridgeActivity {
         nativeNavBarDp = (int) Math.ceil(Math.max(0, navBarPx) / density);
         nativeLeftInsetDp = (int) Math.ceil(Math.max(0, leftInsetPx) / density);
         nativeRightInsetDp = (int) Math.ceil(Math.max(0, rightInsetPx) / density);
+
+        // 沉浸式播放器绘制在系统栏区域内，只需要避让不可覆盖的物理切口。
+        nativeVideoTopInsetDp = (int) Math.ceil(Math.max(0, cutoutTopPx) / density);
+        nativeVideoBottomInsetDp = (int) Math.ceil(Math.max(0, cutoutBottomPx) / density);
+        nativeVideoLeftInsetDp = (int) Math.ceil(Math.max(0, cutoutLeftPx) / density);
+        nativeVideoRightInsetDp = (int) Math.ceil(Math.max(0, cutoutRightPx) / density);
 
         injectNativeInsets();
     }
@@ -306,12 +494,20 @@ public class MainActivity extends BridgeActivity {
             "    r.style.setProperty('--sab-native', '%dpx');" +
             "    r.style.setProperty('--sal-native', '%dpx');" +
             "    r.style.setProperty('--sar-native', '%dpx');" +
+            "    r.style.setProperty('--video-sat-native', '%dpx');" +
+            "    r.style.setProperty('--video-sab-native', '%dpx');" +
+            "    r.style.setProperty('--video-sal-native', '%dpx');" +
+            "    r.style.setProperty('--video-sar-native', '%dpx');" +
             "  }" +
             "})();",
             nativeStatusBarDp,
             nativeNavBarDp,
             nativeLeftInsetDp,
-            nativeRightInsetDp
+            nativeRightInsetDp,
+            nativeVideoTopInsetDp,
+            nativeVideoBottomInsetDp,
+            nativeVideoLeftInsetDp,
+            nativeVideoRightInsetDp
         );
 
         webView.post(() -> webView.evaluateJavascript(js, null));

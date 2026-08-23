@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import { Preferences } from '@capacitor/preferences'
 
+import { log } from './logger'
 import type { Article } from './types'
 
 const PREFIX = 'newsnook:'
@@ -27,7 +28,7 @@ const BOOTSTRAP_MIRROR_KEYS = [
 ] as const
 
 function reportNativeStorageError(operation: string, error: unknown): void {
-  console.warn(`[storage] Native Preferences ${operation} failed`, error)
+  log.storage.warn(`Native Preferences ${operation} failed`, error)
 }
 
 async function cleanupLegacyNativeCacheKeys(): Promise<void> {
@@ -114,7 +115,7 @@ function write(key: string, value: unknown, options?: WriteOptions): void {
     }
   } catch (error) {
     // 存储写满或被禁用时静默降级，不影响阅读
-    console.warn('[storage] localStorage write failed', error)
+    log.storage.warn('localStorage write failed', error)
   }
 }
 

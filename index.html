@@ -16,10 +16,10 @@
     <style>
       :root {
         /* fallback for Chrome < 79 where max() is unsupported */
-        --sat: var(--sat-native, 0px);
-        --sab: var(--sab-native, 0px);
-        --sal: var(--sal-native, 0px);
-        --sar: var(--sar-native, 0px);
+        --sat: var(--sat-native, env(safe-area-inset-top, 0px));
+        --sab: var(--sab-native, env(safe-area-inset-bottom, 0px));
+        --sal: var(--sal-native, env(safe-area-inset-left, 0px));
+        --sar: var(--sar-native, env(safe-area-inset-right, 0px));
       }
       @supports (width: max(1px, 2px)) {
         :root {

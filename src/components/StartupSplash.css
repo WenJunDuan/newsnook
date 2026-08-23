@@ -76,7 +76,7 @@
   position: absolute;
   z-index: 2;
   right: 0;
-  bottom: max(10.5%, var(--sab, 0px));
+  bottom: calc(10.5% + var(--sab, 0px));
   left: 0;
   display: flex;
   flex-direction: column;

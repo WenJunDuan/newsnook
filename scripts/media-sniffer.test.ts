@@ -16,9 +16,9 @@ import {
   mergeObservationSources,
   nestedRequestUrls,
 } from '../src/features/mediaSniffer/core'
-import { logicalMediaUrl } from '../src/features/mediaSniffer/classifier'
+import { logicalMediaUrl, admitObservation as classifyObservation } from '../src/features/mediaSniffer/classifier'
 import {
-  admitObservation,
+  admitSessionObservation,
   buildMediaGraph,
   descriptorFromAsset,
   selectPlayableAsset,
@@ -34,6 +34,11 @@ import {
   mediaDescriptorHtml,
   runtimeProbePageUrl,
 } from '../src/features/mediaSniffer/service'
+import {
+  planSniffTargets,
+  secondaryPlaybackUrlsInHtml,
+} from '../src/features/mediaSniffer/targetPlanner'
+import { nnyyPlayApiUrls } from '../src/features/mediaSniffer/nnyyPlay'
 
 const pageUrl = 'https://news.example/articles/42'
 
@@ -496,8 +501,7 @@ video/1080.m3u8`
     pageUrl,
     'fetch',
   )
-  assert.equal(parsed.length, 1, '未知格式的 http(s) playurl 必须保留给 Graph/Probe 分类')
-  assert.equal(parsed[0].url, 'https://cdn.example/play?id=42')
+  assert.equal(parsed.length, 0, '无 MIME/扩展名的 playurl 在 Classifier Gate 下不直接入库')
 }
 
 {
@@ -537,7 +541,7 @@ video/1080.m3u8`
 {
   const network = new Set(['https://cdn.example/real.mp4'])
   assert.equal(
-    admitObservation(
+    admitSessionObservation(
       { url: 'https://evil.example/ad.mp4', pageUrl, source: 'dom', sessionNonce: 'abc' },
       'abc',
       network,
@@ -545,7 +549,7 @@ video/1080.m3u8`
     false,
   )
   assert.equal(
-    admitObservation(
+    admitSessionObservation(
       { url: 'https://cdn.example/real.mp4', pageUrl, source: 'dom', sessionNonce: 'nope' },
       'abc',
       network,
@@ -553,7 +557,7 @@ video/1080.m3u8`
     false,
   )
   assert.equal(
-    admitObservation(
+    admitSessionObservation(
       { url: 'https://cdn.example/real.mp4', pageUrl, source: 'network' },
       'abc',
       network,
@@ -561,7 +565,7 @@ video/1080.m3u8`
     true,
   )
   assert.equal(
-    admitObservation(
+    admitSessionObservation(
       { url: 'https://evil.example/iframe-only.mp4', pageUrl, source: 'static', fromIframe: true },
       undefined,
       network,
@@ -570,7 +574,7 @@ video/1080.m3u8`
     'iframe 转发且未出现在网络集合中的 URL 必须丢弃',
   )
   assert.equal(
-    admitObservation(
+    admitSessionObservation(
       { url: 'https://cdn.example/real.mp4', pageUrl, source: 'dom', fromIframe: true },
       undefined,
       network,
@@ -578,15 +582,66 @@ video/1080.m3u8`
     true,
     'iframe 转发但已在网络集合中的 URL 可以保留',
   )
+  const iframePage = 'https://player.example/ec?episode=1'
+  const inlineManifest = 'https://cdn.example/live/index.m3u8'
+  const iframeNetwork = new Set([iframePage])
+  assert.equal(
+    admitSessionObservation(
+      { url: inlineManifest, pageUrl: iframePage, source: 'static', fromIframe: true },
+      undefined,
+      iframeNetwork,
+    ),
+    true,
+    '已加载 iframe 文档中的 inline HLS 地址不要求自身先产生网络请求',
+  )
+  assert.equal(
+    admitSessionObservation(
+      { url: inlineManifest, pageUrl: iframePage, source: 'dom', fromIframe: true },
+      undefined,
+      iframeNetwork,
+    ),
+    true,
+    '已加载 iframe 中 DOM/播放器声明的 HLS 在预告片结束前也应保留',
+  )
+  assert.equal(
+    admitSessionObservation(
+      { url: 'https://cdn.example/preroll.mp4', pageUrl: iframePage, source: 'dom', fromIframe: true, mimeType: 'video/mp4' },
+      undefined,
+      iframeNetwork,
+    ),
+    false,
+    'iframe DOM 里的 progressive 仍要求真实网络命中，避免把预告片配置当正文',
+  )
   const graph = buildMediaGraph([
     { url: 'https://cdn.example/real.mp4', pageUrl, source: 'network', mimeType: 'video/mp4' },
     { url: 'https://evil.example/iframe-only.mp4', pageUrl, source: 'static', fromIframe: true, mimeType: 'video/mp4' },
+    { url: iframePage, pageUrl, source: 'network', mimeType: 'text/html' },
+    { url: inlineManifest, pageUrl: iframePage, source: 'static', fromIframe: true },
   ])
   assert.equal(
     graph.some((asset) => asset.videos.some((track) => track.url.includes('evil.example'))),
     false,
     'Graph 不得把未出现在网络集合中的 iframe 转发 URL 收成资产',
   )
+  assert.equal(
+    graph.some((asset) => asset.manifest?.url === inlineManifest),
+    true,
+    '已加载 iframe 文档中的 inline HLS 地址应进入媒体图',
+  )
+}
+
+{
+  const iframePage = 'https://player.example/ec?episode=1'
+  const adUrl = 'https://static.example/uploads/haigou/haigou.mp4'
+  const contentUrl = 'https://cdn.example/show/index.m3u8'
+  const descriptor = buildMediaDescriptor([
+    { url: adUrl, pageUrl: iframePage, source: 'network', mimeType: 'video/mp4', mediaKind: 'video' },
+    { url: contentUrl, pageUrl: iframePage, source: 'dom', fromIframe: true },
+    { url: iframePage, pageUrl, source: 'network' },
+  ])
+  assert.equal(descriptor?.type, 'hls', '预告片 progressive 不得压过 iframe 中声明的正片 HLS')
+  assert.equal(descriptor?.url, contentUrl)
+  assert.equal(descriptor?.resources?.length, 2)
 }
 
 {
@@ -716,6 +771,254 @@ video/1080.m3u8`
     proxySource,
     /URLDecoder\.decode\([^;]*StandardCharsets/,
     '不得把 Charset 传给 URLDecoder.decode，core-oj 在 minSdk 24 设备上没有该重载',
+  )
+}
+
+{
+  const payload = JSON.stringify({
+    video_plays: [{ play_data: 'https://cdn.example/stream/index.m3u8', src_site: 'lz' }],
+  })
+  const observations = parseMediaApiBody(payload, 'https://nnyy.in/dianying/1.html', 'fetch')
+  assert.equal(
+    bestMediaUrlInPayload(JSON.parse(payload), 'https://nnyy.in/dianying/1.html'),
+    'https://cdn.example/stream/index.m3u8',
+    'nnyy play_data should be recognized as media URL',
+  )
+  assert.ok(observations.some((item) => item.url?.includes('.m3u8')))
+
+  const detailHtml = `<script>
+    var url = '/_gp/{0}/{1}'.replace('{0}', '20252607').replace('{1}', ep_slug);
+    on_ep('hd');
+  </script>`
+  assert.deepEqual(
+    nnyyPlayApiUrls(detailHtml, 'https://nnyy.in/dianying/20252607.html'),
+    ['https://nnyy.in/_gp/20252607/hd'],
+  )
+}
+
+// ==================== Classifier Gate ====================
+
+{
+  assert.equal(
+    classifyObservation({
+      url: 'https://cdn.example/static/favicon.png',
+      pageUrl: 'https://news.example/v/1',
+      source: 'static',
+      mediaKind: 'video',
+      hasVideo: true,
+      width: 192,
+      height: 192,
+    }),
+    null,
+  )
+  assert.equal(
+    classifyObservation({
+      url: 'https://cdn.example/theme/common.css',
+      pageUrl: 'https://news.example/v/1',
+      source: 'performance',
+    }),
+    null,
+  )
+  assert.ok(
+    classifyObservation({
+      url: 'https://cdn.example/live/master.m3u8',
+      pageUrl: 'https://news.example/v/1',
+      source: 'network',
+      mimeType: 'application/vnd.apple.mpegurl',
+    }),
+  )
+  const logoOnly = parseMediaApiBody(
+    '{"logo":{"url":"https://x.com/a.png","width":192}}',
+    pageUrl,
+    'fetch',
+  )
+  assert.equal(logoOnly.length, 0, 'JSON 仅含 logo png 的 url 字段不应产生 observation')
+}
+
+// ==================== 图片 URL 守卫（favicon/logo 误报回归） ====================
+
+{
+  assert.equal(
+    mediaFormatFor('https://vod.example/static/favicon/favicon.png', undefined, { mediaKind: 'video' }),
+    'unknown',
+    '宽度/高度启发式不得把图片 URL 分类成视频（favicon/logo 误报）',
+  )
+  assert.equal(
+    mediaFormatFor('https://vod.example/pic/cover.png?v=1', undefined, { mediaKind: 'video' }),
+    'unknown',
+    '带查询串的图片 URL 同样排除',
+  )
+  assert.equal(
+    mediaFormatFor('https://vod.example/logo.png', 'video/mp4'),
+    'progressive',
+    '显式视频 MIME 仍优先于扩展名',
+  )
+  assert.equal(
+    mediaFormatFor('https://vod.example/clip.mp4', undefined, { mediaKind: 'video' }),
+    'progressive',
+    '非图片 URL 的视频提示保持原有行为',
+  )
+}
+
+// ==================== 播放页跟随（generic playback path） ====================
+
+const maccmsDetailUrl = 'https://vod.example/voddetail/42.html'
+const maccmsDetailHtml = `<!DOCTYPE html>
+<html><head>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"示例影院","url":"https://vod.example/","logo":{"@type":"ImageObject","url":"https://vod.example/static/favicon/favicon.png","width":192,"height":192}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoObject","name":"某剧","embedUrl":"https://vod.example/vodplay/42-1-1.html","thumbnailUrl":"https://vod.example/pic/42.png"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Movie","name":"某剧","potentialAction":{"@type":"WatchAction","target":{"@type":"EntryPoint","urlTemplate":"https://vod.example/vodplay/42-1-1.html"}},"url":"https://vod.example/voddetail/42.html"}</script>
+</head><body>
+<a href="/vodplay/42-1-1.html">立即播放</a>
+<a href="/vodplay/42-1-2.html">第2集</a>
+<a href="https://other.example/vodplay/99-1-1.html">外站</a>
+</body></html>`
+
+{
+  assert.deepEqual(
+    secondaryPlaybackUrlsInHtml(maccmsDetailHtml, maccmsDetailUrl),
+    [
+      'https://vod.example/vodplay/42-1-1.html',
+      'https://vod.example/vodplay/42-1-2.html',
+    ],
+    'JSON-LD embedUrl/WatchAction 优先且去重，正文同站 generic playback path 链接兜底，外站不跟随',
+  )
+  const targets = planSniffTargets({
+    pageUrl: maccmsDetailUrl,
+    html: maccmsDetailHtml,
+    staticObservations: [],
+    totalTimeoutMs: 9000,
+  })
+  assert.deepEqual(
+    targets.map((target) => target.url),
+    [
+      'https://vod.example/vodplay/42-1-1.html',
+      'https://vod.example/vodplay/42-1-2.html',
+    ],
+  )
+  assert.equal(targets[0]?.budgetMs, 9000, '首个播放目标应获得完整探测预算')
+  assert.equal(targets[1]?.budgetMs, 9000, '后续目标由编排层按剩余时间动态截断')
+  const observations = observeMediaInHtml(maccmsDetailHtml, maccmsDetailUrl)
+  assert.equal(
+    buildMediaDescriptor(observations),
+    null,
+    '详情页只有 JSON-LD logo（192x192）时不得产出可播放媒体',
+  )
+}
+
+{
+  const probed: Array<{ url: string; timeoutMs: number; referrer?: string }> = []
+  const observation: MediaObservation = {
+    url: 'https://cdn.example/master.m3u8',
+    pageUrl: 'https://vod.example/vodplay/42-1-1.html',
+    source: 'network',
+    mimeType: 'application/vnd.apple.mpegurl',
+  }
+  const descriptor = await discoverMediaDescriptor({
+    pageUrl: maccmsDetailUrl,
+    html: maccmsDetailHtml,
+    runtime: true,
+    timeoutMs: 9000,
+    observeNative: async (url, timeoutMs, referrer) => {
+      probed.push({ url, timeoutMs, referrer })
+      return [observation]
+    },
+  })
+  assert.equal(probed.length, 2, '详情页自身无媒体时按队列探测同站播放页，不再浪费窗口加载无播放器的详情页')
+  assert.equal(probed[0]?.url, 'https://vod.example/vodplay/42-1-1.html')
+  assert.equal(probed[0]?.timeoutMs, 9000, '首个播放目标应获得完整嗅探预算')
+  assert.equal(probed[0]?.referrer, maccmsDetailUrl, '播放页请求应携带详情页作为 Referer')
+  assert.equal(descriptor?.url, observation.url)
+}
+
+{
+  const probed: string[] = []
+  const html = '<video src="https://cdn.example/a.m3u8"></video><a href="/vodplay/1-1-1.html">播放</a>'
+  await discoverMediaDescriptor({
+    pageUrl: 'https://vod.example/voddetail/1.html',
+    html,
+    runtime: true,
+    timeoutMs: 6000,
+    observeNative: async (url) => {
+      probed.push(url)
+      return []
+    },
+  })
+  assert.deepEqual(
+    probed,
+    ['https://vod.example/voddetail/1.html'],
+    '页面自身已声明媒体时保持原有行为：探测页面本身，不跟随播放页',
+  )
+}
+
+{
+  const playerHtml = '<script>window.HR_P2P={"channel_key":"https://cdn.example/live/index.m3u8","region":"US"}</script>'
+  const observations = observeMediaInHtml(playerHtml, 'https://player.example/ec')
+  assert.ok(
+    observations.some((item) => item.url === 'https://cdn.example/live/index.m3u8'),
+    '播放器脚本中的 channel_key 清单 URL 必须进入静态观察路径',
+  )
+}
+
+{
+  const parsed = parseMediaApiBody(JSON.stringify({
+    format: 'hls',
+    url: 'https://cdn.example/live/master',
+    backup_urls: ['https://backup.example/live/master.m3u8', 'https://backup.example/live/alt.m3u8'],
+  }), pageUrl, 'fetch')
+  assert.equal(parsed.length, 3, '播放器 API 的 format 与 backup_urls 应全部进入观察图')
+  assert.ok(parsed.every((item) => item.mimeType === 'application/vnd.apple.mpegurl' || item.url?.endsWith('.m3u8')))
+}
+
+{
+  const wrapped = `https://player.example/proxy?url=${encodeURIComponent('https://cdn.example/signed/master.m3u8?token=1')}`
+  const parsed = parseMediaApiBody(JSON.stringify({ url: wrapped }), pageUrl, 'fetch')
+  assert.deepEqual(parsed.map((item) => item.url), ['https://cdn.example/signed/master.m3u8?token=1'], 'API 包装 URL 应展开内部媒体地址')
+}
+
+{
+  const targets = planSniffTargets({
+    pageUrl: 'https://news.example/article/1',
+    html: '<iframe src="https://player.example/embed/1"></iframe>',
+    staticObservations: [],
+    totalTimeoutMs: 6000,
+  })
+  assert.deepEqual(targets, [{
+    url: 'https://player.example/embed/1',
+    referrer: 'https://news.example/article/1',
+    budgetMs: 6000,
+  }], '无 JSON-LD 播放页时 iframe 也应成为独立嗅探目标')
+}
+
+{
+  const pageUrl = 'https://vod.example/vodplay/1-1-1.html'
+  const html = `<script type="application/ld+json">{"@type":"VideoObject","embedUrl":"https://canonical.example/vodplay/1-1-1.html"}</script>
+    <iframe src="/Player/ec?episode=1-1-1"></iframe>
+    <a href="/vodplay/'+U+'">模板占位</a>
+    <a href="/vodplay/1-1-2.html">下一集</a>`
+  const targets = planSniffTargets({
+    pageUrl,
+    html,
+    staticObservations: [],
+    totalTimeoutMs: 9000,
+  })
+  assert.deepEqual(
+    targets.map((target) => target.url),
+    [
+      'https://vod.example/Player/ec?episode=1-1-1',
+      'https://canonical.example/vodplay/1-1-1.html',
+      'https://vod.example/vodplay/1-1-2.html',
+    ],
+    '存在 iframe 播放器时必须优先探测 iframe；模板占位链接不能污染嗅探队列',
+  )
+}
+
+{
+  const html = '<meta property="og:url" content="https://redirected.example/vodplay/1-1-1.html"><iframe src="/Player/ec?episode=1-1-1"></iframe>'
+  assert.deepEqual(
+    embeddedPageUrlsInHtml(html, 'https://original.example/vodplay/1-1-1.html'),
+    ['https://redirected.example/Player/ec?episode=1-1-1'],
+    '页面发生域名重定向时，相对 iframe 必须按 HTML 的有效站点基址解析',
   )
 }
 

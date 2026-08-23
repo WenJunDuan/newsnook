@@ -1,10 +1,10 @@
-import { useEffect, useState, type RefObject } from 'react'
+import { useEffect, useState, type MutableRefObject, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { RefreshCw } from 'lucide-react'
 
 import { describeInlineVideo, type InlineVideoDescriptor } from '../lib/inlineVideos'
 import type { MediaResourceDescriptor } from '../features/mediaSniffer/types'
-import { InkVideoPlayer } from './InkVideoPlayer'
+import { InkVideoPlayer, type InkVideoPlayerFullscreenHandle } from './InkVideoPlayer'
 
 interface Props {
   rootRef: RefObject<HTMLElement | null>
@@ -15,6 +15,8 @@ interface Props {
   deferLoad?: boolean
   onUnlocked?: (src: string) => void
   onRefreshSource?: () => void
+  /** 播放器全屏句柄：让阅读器返回键在全屏时先退出全屏 */
+  fullscreenHandleRef?: MutableRefObject<InkVideoPlayerFullscreenHandle | null>
 }
 
 interface MountedInlineVideo extends InlineVideoDescriptor {
@@ -37,6 +39,7 @@ export function InlineArticleVideos({
   deferLoad,
   onUnlocked,
   onRefreshSource,
+  fullscreenHandleRef,
 }: Props) {
   const [mounted, setMounted] = useState<MountedInlineVideo[]>([])
 
@@ -98,6 +101,7 @@ export function InlineArticleVideos({
           onRefreshSource={onRefreshSource}
           deferLoad={deferLoad}
           onUnlocked={() => onUnlocked?.(video.src)}
+          fullscreenHandleRef={fullscreenHandleRef}
         />
       ),
       host,

@@ -1,4 +1,6 @@
-/** 启动链路轻量打点：开发期写 console，正式包只留 mark 便于真机采样 */
+/** 启动链路轻量打点：开发期写 logger，正式包只留 mark 便于真机采样 */
+
+import { log } from './logger'
 
 const PREFIX = 'newsnook-boot'
 
@@ -9,13 +11,11 @@ export function bootMark(name: string): void {
   } catch {
     // 部分 WebView 不支持 performance.mark
   }
-  if (import.meta.env.DEV) {
-    const now =
-      typeof performance !== 'undefined' && typeof performance.now === 'function'
-        ? performance.now().toFixed(1)
-        : String(Date.now())
-    console.info(`[boot] ${name} @ ${now}ms`)
-  }
+  const now =
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now().toFixed(1)
+      : String(Date.now())
+  log.boot.info(`${name} @ ${now}ms`)
 }
 
 export function bootMeasure(name: string, startMark: string, endMark: string): void {

@@ -1,4 +1,4 @@
-import { isHttpUrl, mediaFormatFor, normalizedMime } from './classifier'
+import { admitObservation, isHttpUrl, mediaFormatFor, normalizedMime } from './classifier'
 import type { MediaObservation } from './types'
 
 const URL_FIELDS = [
@@ -7,11 +7,19 @@ const URL_FIELDS = [
   'base_url',
   'playurl',
   'play_url',
+  'play_data',
   'backupUrl',
   'backup_url',
+  'backup_urls',
   'manifestUrl',
+  'manifest_url',
+  'hlsmanifesturl',
+  'dashmanifesturl',
   'contentUrl',
   'playbackUrl',
+  'video_url',
+  'media_url',
+  'file',
   'src',
 ] as const
 
@@ -48,6 +56,35 @@ function positiveNumber(value: unknown): number | undefined {
   return Number.isFinite(number) && number > 0 ? number : undefined
 }
 
+function nestedUrlValues(value: string): string[] {
+  try {
+    const wrapper = new URL(value)
+    const nested: string[] = []
+    for (const [key, raw] of wrapper.searchParams) {
+      if (!/^(?:url|src|source|file|video|video_url|playurl|play_url|media|media_url)$/i.test(key)) continue
+      let candidate = raw.trim()
+      for (let pass = 0; pass < 2 && !/^https?:\/\//i.test(candidate); pass += 1) {
+        try { candidate = decodeURIComponent(candidate) } catch { break }
+      }
+      if (/^https?:\/\//i.test(candidate) && candidate !== value && !nested.includes(candidate)) nested.push(candidate)
+    }
+    return nested
+  } catch {
+    return []
+  }
+}
+
+function mimeFromFormat(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'm3u8' || normalized === 'hls') return 'application/vnd.apple.mpegurl'
+  if (normalized === 'mpd' || normalized === 'dash') return 'application/dash+xml'
+  if (/^(?:mp4|m4v|webm|mov|flv|mkv)$/.test(normalized)) return 'video/mp4'
+  if (/^(?:m4a|aac|mp3|ogg|opus)$/.test(normalized)) return 'audio/mpeg'
+  if (/^(?:video|audio)\/[a-z0-9.+-]+$/.test(normalized)) return normalized
+  return undefined
+}
+
 function urlFieldValues(value: Record<string, unknown>): string[] {
   const values: string[] = []
   for (const field of URL_FIELDS) {
@@ -70,9 +107,17 @@ function trackHints(value: Record<string, unknown>, mediaKind?: MediaObservation
   MediaObservation,
   'mimeType' | 'mediaKind' | 'width' | 'height' | 'bitrate' | 'hasAudio' | 'hasVideo' | 'codecs' | 'quality' | 'initializationRange' | 'indexRange'
 > {
-  const mimeType = stringField(value, 'mimeType', 'contentType', 'mime')
+  const declaredMime = stringField(value, 'mimeType', 'contentType', 'mime')
+  const declaredFormat = stringField(value, 'format', 'fmt', 'container', 'ext', 'type')
+  const mimeType = declaredMime || mimeFromFormat(declaredFormat)
   const mime = normalizedMime(mimeType)
+  const declaredKind = /^(?:video|audio)$/i.test(declaredFormat || '')
+    ? declaredFormat?.toLowerCase() as MediaObservation['mediaKind']
+    : undefined
   const kind = mediaKind
+    || declaredKind
+    || (value.isVideo === true || value.video === true ? 'video' : undefined)
+    || (value.isAudio === true || value.audio === true ? 'audio' : undefined)
     || (mime.startsWith('audio/') ? 'audio' : mime.startsWith('video/') ? 'video' : undefined)
   const width = positiveNumber(value.width)
   const height = positiveNumber(value.height)
@@ -111,9 +156,14 @@ function pushObservation(
   if (observations.length >= MAX_OBSERVATIONS) return
   const url = resolvedUrl(rawUrl, pageUrl)
   if (!url) return
-  const format = mediaFormatFor(url, hints.mimeType, hints.mediaKind ? { mediaKind: hints.mediaKind } : undefined)
-  if (format === 'blob') return
-  observations.push({ url, pageUrl, source, ...hints })
+  const candidates = [url, ...nestedUrlValues(url)]
+  for (const candidate of candidates) {
+    if (observations.length >= MAX_OBSERVATIONS) return
+    const format = mediaFormatFor(candidate, hints.mimeType, hints.mediaKind ? { mediaKind: hints.mediaKind } : undefined)
+    if (format === 'unknown' || format === 'blob') continue
+    const admitted = admitObservation({ url: candidate, pageUrl, source, ...hints })
+    if (admitted) observations.push(admitted)
+  }
 }
 
 function emitUrlFields(

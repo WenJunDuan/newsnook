@@ -1,4 +1,4 @@
-import type { MediaFormat } from './types'
+import type { MediaFormat, MediaObservation } from './types'
 
 export const MANIFEST_MIMES = new Map<string, MediaFormat>([
   ['application/vnd.apple.mpegurl', 'hls'],
@@ -11,6 +11,11 @@ export const DIRECT_MEDIA_EXT = /\.(?:mp4|m4v|webm|mov|flv|mkv|m4a|aac|mp3|ogg|o
 const HLS_EXT = /\.m3u8(?:$|[?#])/i
 const DASH_EXT = /\.mpd(?:$|[?#])/i
 const M4S_EXT = /\.m4s(?:$|[?#])/i
+const IMAGE_EXT = /\.(?:png|jpe?g|gif|webp|avif|svg|ico|bmp|tiff?)(?:$|[?#])/i
+const STATIC_ASSET_EXT = /\.(?:css|js|mjs|map|woff2?|ttf|otf|eot)(?:$|[?#])/i
+const VIDEO_CODEC = /(?:^|[\s,"'])(?:avc1|av01|hvc1|hev1|vp0?9|vp8)(?:[.\s,"']|$)/i
+const AUDIO_CODEC = /(?:^|[\s,"'])(?:mp4a|aac|opus|vorbis|ac-3|ec-3)(?:[.\s,"']|$)/i
+const MEDIA_QUERY_HINT_KEY = /^is(?:video|music)$/i
 const VOLATILE_QUERY_KEY = /^(?:token|auth|authorization|signature|sig|expires?|expiry|e|hdnts|policy|key-pair-id|x-amz-.+)$/i
 // YouTube/googlevideo and similar chunk transports vary these fields on every
 // request. They are safe to remove only from the internal grouping key.
@@ -85,6 +90,86 @@ export function isHttpUrl(value: string): boolean {
   }
 }
 
+/** 图片 URL：任何启发式信号都不应把它当作可播放媒体。 */
+export function isImageUrl(url: string): boolean {
+  return IMAGE_EXT.test(url)
+}
+
+/** 静态资源（图片、样式、脚本、字体）：不可播放。path 在 query 前判定。 */
+export function isStaticAssetUrl(url: string): boolean {
+  const path = url.split(/[?#]/, 1)[0] ?? url
+  return IMAGE_EXT.test(path) || STATIC_ASSET_EXT.test(path)
+}
+
+/** 与 Android probe 脚本共用的 URL 形态启发式（单源文档化）。 */
+export function looksMediaUrl(url: string): boolean {
+  if (!url) return false
+  if (url.startsWith('blob:')) return true
+  return HLS_EXT.test(url)
+    || DASH_EXT.test(url)
+    || DIRECT_MEDIA_EXT.test(url)
+    || M4S_EXT.test(url)
+    || /\.(?:ts|cmfv|cmfa)(?:$|[?#])/i.test(url)
+}
+
+/** fetch/xhr body 是否像播放器 JSON，避免对任意 JSON 做深度 walk。 */
+export function looksLikePlayerJson(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false
+  return /"(?:url|playurl|play_url|manifestUrl|hlsmanifesturl|dashmanifesturl|manifest_url|video_url|media_url|backupUrl|backup_url|file)"\s*:/i.test(trimmed)
+    || /"(?:video|audio|stream|streams|playinfo|player)"\s*:/i.test(trimmed)
+}
+
+function hasMediaQueryHint(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    for (const [key, raw] of parsed.searchParams) {
+      const value = raw.trim().toLowerCase()
+      if (MEDIA_QUERY_HINT_KEY.test(key) && value === 'true') return true
+      if (MIME_QUERY_KEY.test(key) && /^(?:video|audio)\//.test(value)) return true
+    }
+  } catch {
+    // fall through
+  }
+  return false
+}
+
+function hasStrongMediaSignal(obs: MediaObservation, url: string): boolean {
+  const mime = normalizedMime(obs.mimeType) || mimeFromUrl(url)
+  if (mime.startsWith('video/') || mime.startsWith('audio/') || MANIFEST_MIMES.has(mime)) return true
+  if (HLS_EXT.test(url) || DASH_EXT.test(url) || DIRECT_MEDIA_EXT.test(url)) return true
+  if (obs.quality) return true
+  if (obs.hasVideo === true || obs.hasAudio === true) return true
+  const codecText = `${mime} ${obs.codecs || ''}`
+  if (VIDEO_CODEC.test(codecText) || AUDIO_CODEC.test(codecText)) return true
+  if (obs.source === 'dom') return true
+  return false
+}
+
+/** 统一分类门控：任意 observation 入库前的权威语义。 */
+export function admitObservation(obs: MediaObservation): MediaObservation | null {
+  const url = obs.url?.trim()
+  if (!url) {
+    if (obs.drmKeySystem || obs.mseMimeType) return obs
+    return null
+  }
+  if (isStaticAssetUrl(url)) return null
+
+  const format = mediaFormatFor(
+    url,
+    obs.mimeType,
+    obs.mediaKind ? { mediaKind: obs.mediaKind } : undefined,
+  )
+  if (format === 'blob' && obs.source !== 'dom' && obs.source !== 'mse') return null
+  if (format === 'unknown') {
+    if (obs.source !== 'dom' && !hasMediaQueryHint(url)) return null
+  }
+
+  if (obs.source === 'performance' && !looksMediaUrl(url)) return null
+  if (obs.source === 'static' && !hasStrongMediaSignal(obs, url)) return null
+  return obs
+}
+
 export function logicalMediaUrl(url: string): string {
   try {
     const parsed = new URL(url)
@@ -115,6 +200,9 @@ export function mediaFormatFor(
   }
   if (mime.startsWith('video/') || hints?.mediaKind === 'video') {
     if (M4S_EXT.test(url)) return 'video-track'
+    // Heuristic video hints (width/height in structured payloads) must not turn
+    // image URLs — favicons, logos, posters — into playable progressive video.
+    if (!mime.startsWith('video/') && IMAGE_EXT.test(url)) return 'unknown'
     return 'progressive'
   }
   if (M4S_EXT.test(url) || /\.(?:cmfv)(?:$|[?#])/i.test(url)) return 'video-track'

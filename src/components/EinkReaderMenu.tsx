@@ -64,7 +64,8 @@ export function EinkReaderMenu({
       <div
         role="dialog"
         aria-label="阅读菜单"
-        className="shrink-0 border-t border-haze bg-ink pb-[max(var(--sab),12px)] pt-3"
+        className="shrink-0 border-t border-haze bg-ink pt-3"
+        style={{ paddingBottom: 'calc(var(--sab) + 12px)' }}
       >
         <div className="page-x mx-auto w-full max-w-3xl space-y-4">
           <div className="flex items-center justify-between gap-2">

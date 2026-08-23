@@ -42,6 +42,7 @@ export function useProgressiveImages(
         img.classList.add('reader-img-badge')
         return
       }
+      if (stamped === 'related-image') return
       const role = classifyLoadedImage(img.naturalWidth, img.naturalHeight)
       if (role === 'decorative') {
         img.classList.add('async-img-failed')
@@ -141,6 +142,7 @@ export function useProgressiveImages(
 
     const cleanups = Array.from(root.querySelectorAll('img')).map((img) => {
       const premarkedBadge = img.getAttribute('data-reader-role') === 'badge'
+      const premarkedRelated = img.getAttribute('data-reader-role') === 'related-image'
       if (premarkedBadge) img.classList.add('reader-img-badge')
 
       const deferredUrl = img.getAttribute(DEFERRED_SRC_ATTR)
@@ -155,12 +157,12 @@ export function useProgressiveImages(
       }
 
       if (img.complete) {
-        if (!premarkedBadge) img.classList.add('async-img')
+        if (!premarkedBadge && !premarkedRelated) img.classList.add('async-img')
         settle(img, img.naturalWidth > 0)
         return undefined
       }
 
-      if (!premarkedBadge) img.classList.add('async-img', 'ink-shimmer')
+      if (!premarkedBadge && !premarkedRelated) img.classList.add('async-img', 'ink-shimmer')
       const onLoad = () => settle(img, true)
       const onError = () => settle(img, false)
       img.addEventListener('load', onLoad)

@@ -2,8 +2,11 @@ package com.aizeek.newsnook;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.media.AudioManager;
+import android.os.BatteryManager;
 import android.provider.Settings;
 import android.view.Window;
 import android.view.WindowManager;
@@ -80,6 +83,38 @@ public class DeviceMediaControlsPlugin extends Plugin {
         });
     }
 
+    /**
+     * Sticky ACTION_BATTERY_CHANGED — no runtime permission required.
+     * level is 0–1 to match the Web Battery Status API.
+     */
+    @PluginMethod
+    public void getBattery(PluginCall call) {
+        Context context = getContext();
+        if (context == null) {
+            call.reject("Context 不可用");
+            return;
+        }
+
+        Intent status = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (status == null) {
+            call.reject("无法读取电池状态");
+            return;
+        }
+
+        int rawLevel = status.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int scale = status.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+        int batteryStatus = status.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN);
+        boolean charging =
+            batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING
+                || batteryStatus == BatteryManager.BATTERY_STATUS_FULL;
+
+        float ratio = (rawLevel >= 0 && scale > 0) ? clamp01(rawLevel / (float) scale) : 0f;
+        JSObject result = new JSObject();
+        result.put("level", ratio);
+        result.put("charging", charging);
+        call.resolve(result);
+    }
+
     @PluginMethod
     public void getVolume(PluginCall call) {
         AudioManager audio = audioManager();
@@ -127,6 +162,34 @@ public class DeviceMediaControlsPlugin extends Plugin {
         call.resolve(level((float) audio.getStreamVolume(AudioManager.STREAM_MUSIC) / max));
     }
 
+    /**
+     * Authoritative fullscreen bridge for the custom video player.
+     *
+     * This intentionally lives on a Capacitor plugin instead of relying on a raw
+     * addJavascriptInterface object. The same plugin already owns video orientation,
+     * brightness and volume, so a successful call proves that the request reached
+     * the native Activity before the Web layer promotes the player to fullscreen.
+     */
+    @PluginMethod
+    public void setVideoFullscreen(PluginCall call) {
+        Boolean active = call.getBoolean("active");
+        if (active == null) {
+            call.reject("Missing active state");
+            return;
+        }
+
+        Activity activity = getActivity();
+        if (!(activity instanceof MainActivity)) {
+            call.reject("MainActivity unavailable");
+            return;
+        }
+
+        activity.runOnUiThread(() -> {
+            ((MainActivity) activity).setVideoFullscreen(active);
+            call.resolve();
+        });
+    }
+
     @PluginMethod
     public void lockOrientation(PluginCall call) {
         String orientation = call.getString("orientation");
@@ -135,6 +198,9 @@ public class DeviceMediaControlsPlugin extends Plugin {
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
         } else if ("portrait".equals(orientation)) {
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT;
+        } else if ("sensor".equals(orientation)) {
+            // 跟随设备：横竖屏都放开，由传感器决定（覆盖系统自动旋转开关）
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR;
         } else {
             call.reject("Unsupported orientation");
             return;

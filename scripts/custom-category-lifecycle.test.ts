@@ -86,9 +86,9 @@ assert.ok(!deletedPrefs.hiddenCategoryIds.includes(newCategoryId))
 
 // 8. 自建信源挂到自建分类：摘要必须能解析 label，不能误显示「未选择信源」
 const { nextPrefs: prefsWithRss, newSourceId: customRssId } = addCustomSource(DEFAULT_PREFERENCES, {
-  name: '91porn.com',
-  label: '91',
-  url: 'https://91porn.com/index.php',
+  name: 'example.com',
+  label: '示例',
+  url: 'https://example.com/index.php',
 })
 const { nextPrefs: prefsRssCategory, newCategoryId: rssCategoryId } = addCustomCategory(prefsWithRss, {
   label: '123214',
@@ -96,9 +96,9 @@ const { nextPrefs: prefsRssCategory, newCategoryId: rssCategoryId } = addCustomC
   sourceIds: [customRssId],
 })
 assert.equal(describeSources([customRssId]), '未选择信源')
-assert.equal(describeSources([customRssId], prefsRssCategory.customSources), '91')
+assert.equal(describeSources([customRssId], prefsRssCategory.customSources), '示例')
 const rssResolved = resolveCategory(rssCategoryId, prefsRssCategory)
 assert.deepEqual(rssResolved.sourceIds, [customRssId])
-assert.equal(rssResolved.caption, '91')
+assert.equal(rssResolved.caption, '示例')
 
 console.log('custom category lifecycle: all tests passed successfully!')

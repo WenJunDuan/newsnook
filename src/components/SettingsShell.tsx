@@ -18,7 +18,11 @@ export function SettingsShell({ title, caption, action, onBack, children }: Prop
   return (
     <div
       className="absolute inset-0 z-30 flex flex-col bg-ink"
-      style={{ animation: reduced ? undefined : 'settings-in 320ms var(--ease-ink) both' }}
+      style={{
+        paddingTop: 'var(--sat)',
+        paddingBottom: 'var(--sab)',
+        animation: reduced ? undefined : 'settings-in 320ms var(--ease-ink) both'
+      }}
     >
       <style>{`@keyframes settings-in { from { opacity: 0; transform: translateX(18px) } to { opacity: 1; transform: none } }`}</style>
 
@@ -50,7 +54,8 @@ export function SettingsShell({ title, caption, action, onBack, children }: Prop
 
       <div
         data-settings-scroll
-        className="scroll-hidden min-h-0 flex-1 overflow-y-auto pb-[max(var(--sab),24px)]"
+        className="scroll-hidden min-h-0 flex-1 overflow-y-auto"
+        style={{ paddingBottom: '24px' }}
       >
         <div className="max-w-4xl mx-auto w-full">
           {children}

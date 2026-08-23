@@ -20,11 +20,15 @@ Tailwind CSS v4 官方最低要求 Chrome 111，依赖 `@layer`、`@property`、
 | 处理 | Chrome 要求 | 做法 |
 |---|---|---|
 | `@layer` | 99+ | postcss 剥离（已有） |
-| `@property` | 85+ | postcss 移除声明 |
+| `@property` | 85+ | postcss 移除声明；并无条件注入 `--tw-border-style` 等变量兜底（见下） |
+| `:where()` | 88+ | lightningcss 不降级；构建后 unwrap 为内层选择器（`scripts/webview-css-compat.ts`） |
 | `oklch()` | 111+ | lightningcss `targets: chrome 69` 自动降级为 rgb |
 | `color-mix()` | 111+ | postcss 转 rgb + lightningcss 兜底 |
 | `in oklab` 渐变 | 111+ | postcss 移除 + lightningcss 兜底 |
 | vendor prefix | 各异 | lightningcss 自动补全 |
+| flex `gap` | 84+ | `data-no-flex-gap` + margin fallback |
+
+**为何必须补 `:where` / 变量兜底：** Tailwind v4 的 `divide-y` / `divide-haze` 依赖 `:where(...)` 与 `--tw-border-style`。剥离 `@property` 后，若 WebView 不匹配 Tailwind 自带的复杂 `@supports` 回退，边框色与 `border-style` 为空，列表分隔线在 Android 上消失而桌面 Chrome 仍正常。
 
 ## 4. JS 构建目标
 
@@ -61,6 +65,7 @@ Tailwind CSS v4 官方最低要求 Chrome 111，依赖 `@layer`、`@property`、
 
 ## 8. 验证方法
 
-1. `npm run build` 后检查 `dist/assets/*.css` 不含 `oklch`、`@layer`、`@property`
-2. Chrome DevTools 设备模拟切换旧版 UA 验证检测逻辑
-3. 实机 WebView 69 设备验证可打开
+1. `npm run build` 后检查 `dist/assets/*.css` 不含 `oklch`、`@layer`、`@property`、`:where(`
+2. `npm run test:webview-css-compat`
+3. Chrome DevTools 设备模拟切换旧版 UA 验证检测逻辑
+4. 实机 WebView 69 设备验证可打开；信息流列表项之间应有 `divide-haze` 细线

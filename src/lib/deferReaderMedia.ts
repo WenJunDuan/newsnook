@@ -36,6 +36,10 @@ function isBadge(img: Element): boolean {
   return img.getAttribute('data-reader-role') === 'badge'
 }
 
+function isRelatedCover(img: Element): boolean {
+  return img.getAttribute('data-reader-role') === 'related-image'
+}
+
 function wrapHost(el: Element, phase: DeferredHostPhase): void {
   const doc = el.ownerDocument
   const host = doc.createElement('button')
@@ -57,7 +61,7 @@ function deferImage(
   phases: ReadonlyMap<string, DeferredHostPhase>,
   playableSrcByUrl: ReadonlyMap<string, string>,
 ): void {
-  if (isBadge(img)) return
+  if (isBadge(img) || isRelatedCover(img)) return
   const src = img.getAttribute('src')
   if (!src || src.startsWith('data:') || src.startsWith('blob:')) return
   if (unlocked.has(src)) {

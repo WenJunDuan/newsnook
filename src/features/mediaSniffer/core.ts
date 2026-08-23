@@ -3,7 +3,9 @@ import { XMLParser } from 'fast-xml-parser'
 import {
   DIRECT_MEDIA_EXT,
   MANIFEST_MIMES,
+  admitObservation,
   isHttpUrl,
+  isImageUrl,
   mediaFingerprint,
   mediaFormatFor,
   mimeFromUrl,
@@ -72,7 +74,9 @@ function mediaKindFor(observation: MediaObservation): MediaCandidate['mediaKind'
 
 export function collectMediaCandidates(observations: MediaObservation[]): MediaCandidate[] {
   const grouped = new Map<string, MediaCandidate>()
-  for (const observation of observations) {
+  for (const raw of observations) {
+    const observation = admitObservation(raw)
+    if (!observation) continue
     const originalUrl = observation.url?.trim()
     if (!originalUrl || (!isHttpUrl(originalUrl) && !originalUrl.startsWith('blob:'))) continue
     const format = mediaFormatFor(
@@ -325,6 +329,7 @@ function addStructuredPayloadObservation(
   ]
     .find((item): item is string => typeof item === 'string' && item.trim().length > 0)
   if (!mediaUrl) return
+  if (isImageUrl(mediaUrl)) return
 
   const mimeType = [value.mimeType, value.contentType, value.mime]
     .find((item): item is string => typeof item === 'string')
@@ -333,7 +338,14 @@ function addStructuredPayloadObservation(
   const height = positiveNumber(value.height)
   const bitrate = positiveNumber(value.bitrate)
   const hasVideoSignal = Boolean(
-    width || height || value.qualityLabel || normalizedMime(mimeType).startsWith('video/') || VIDEO_CODEC.test(codecText),
+    value.qualityLabel
+    || normalizedMime(mimeType).startsWith('video/')
+    || VIDEO_CODEC.test(codecText)
+    || (typeof mediaUrl === 'string' && (
+      /\.m3u8(?:$|[?#])/i.test(mediaUrl)
+      || /\.mpd(?:$|[?#])/i.test(mediaUrl)
+      || DIRECT_MEDIA_EXT.test(mediaUrl)
+    )),
   )
   const hasAudioSignal = Boolean(
     value.audioQuality || value.audioSampleRate || value.audioChannels ||

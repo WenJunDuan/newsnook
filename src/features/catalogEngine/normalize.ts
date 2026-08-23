@@ -83,7 +83,42 @@ export function isUtilityPath(url: string): boolean {
 }
 
 export function looksLikeDetailUrl(url: string): boolean {
-  return /\/(?:video|watch|play|view|clip|episode|ep|v|media|archives|post|article|news|detail|item)s?(?:\/|$|[?#])/i.test(
+  return /\/(?:video|watch|play|view|clip|episode|ep|v|media|archives|post|article|news|voddetail|vodplay|detail|item)s?(?:\/|$|[?#])/i.test(
     url,
   )
+}
+
+/** MacCMS ds3 等主题未替换的占位符、徽章文案 */
+export function normalizeCatalogTitle(raw: string): string {
+  return raw
+    .replace(/votype_\d+type_name/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function isLikelyBadgeTitle(title: string): boolean {
+  const t = title.trim()
+  if (!t) return false
+  if (/^(?:热映推荐|豆瓣热榜|更新至)/.test(t)) return true
+  return /^(?:全\d+集|\d+集全|\d+)$/.test(t)
+}
+
+export function scoreCatalogTitle(title: string): number {
+  let score = 0
+  const len = title.trim().length
+  if (len >= 2 && len <= 36) score += 4
+  else if (len <= 60) score += 2
+  else score -= 4
+  if (/votype_|type_name/i.test(title)) score -= 8
+  if (isLikelyBadgeTitle(title)) score -= 6
+  if (/^\d+$/.test(title.trim())) score -= 5
+  return score
+}
+
+export function pickBetterCatalogTitle(a: string, b: string): string {
+  const left = normalizeCatalogTitle(a)
+  const right = normalizeCatalogTitle(b)
+  if (!left) return right
+  if (!right) return left
+  return scoreCatalogTitle(left) >= scoreCatalogTitle(right) ? left : right
 }

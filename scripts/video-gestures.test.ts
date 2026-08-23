@@ -108,6 +108,33 @@ assert.equal(zoomedPan.y, -200)
     /-translate-x-1\/2/,
     '播放键不得依赖 Tailwind v4 的 -translate-*（会编译成 translate 属性）',
   )
+
+  assert.match(
+    css,
+    /\.ink-video-y-center\s*\{[^}]*transform:\s*translateY\(-50%\)/,
+    '进度轨居中必须用经典 transform，兼容 Chrome 69+ WebView',
+  )
+  assert.match(
+    css,
+    /\.ink-seek\s*\{[^}]*-webkit-appearance:\s*none/,
+    '旧 Android WebView 的 range 必须显式关闭 WebKit 原生外观',
+  )
+
+  const seekStart = player.indexOf('{/* Seek Bar Row */}')
+  const controlsStart = player.indexOf('{/* Controls Row */}', seekStart)
+  assert.ok(seekStart >= 0 && controlsStart > seekStart)
+  const seekBar = player.slice(seekStart, controlsStart)
+  assert.doesNotMatch(
+    seekBar,
+    /-translate-y-1\/2/,
+    '进度条不得依赖 Tailwind v4 的独立 translate 属性',
+  )
+  assert.doesNotMatch(
+    seekBar,
+    /Thumb dot|style=\{\{ left:/,
+    '进度圆点只能由 range thumb 绘制，不能再叠一层 DOM 圆点',
+  )
+  assert.equal((seekBar.match(/type="range"/g) ?? []).length, 1)
 }
 
 console.log('video-gestures: ok')

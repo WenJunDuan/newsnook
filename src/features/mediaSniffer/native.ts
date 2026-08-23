@@ -13,6 +13,16 @@ interface NativeMediaSnifferPlugin {
     observations: MediaObservation[]
     pageUrl?: string
   }>
+  startLiveSession(options: { url: string; referrer?: string; sessionId: string }): Promise<void>
+  stopLiveSession(options: { sessionId: string }): Promise<void>
+  setLiveSessionVisible(options: { visible: boolean }): Promise<void>
+  setLiveSessionBounds(options: {
+    x: number
+    y: number
+    width: number
+    height: number
+    cornerRadius?: number
+  }): Promise<void>
   addListener(
     eventName: 'mediaObservation',
     listener: (event: { sessionId?: string; observation?: MediaObservation }) => void,
@@ -195,6 +205,59 @@ export async function observeMediaInNativePage(
   } finally {
     await listener?.remove().catch(() => undefined)
   }
+}
+
+export async function startNativeLiveSniffSession(options: {
+  url: string
+  referrer?: string
+  onObservation: (observation: MediaObservation) => void
+}): Promise<{ sessionId: string; stop: () => Promise<void> }> {
+  if (Capacitor.getPlatform() !== 'android') {
+    throw new Error('Live sniff session is Android-only')
+  }
+  const sessionId = typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `live-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  let listener: PluginListenerHandle | undefined
+  try {
+    listener = await NativeMediaSniffer.addListener('mediaObservation', (event) => {
+      if (event.sessionId !== sessionId || !event.observation) return
+      const [observation] = observationsWithoutSessionNonce([event.observation])
+      options.onObservation(observation)
+    })
+  } catch {
+    // Older shells without the event still start the visible WebView;
+    // candidates then only appear after a future plugin upgrade.
+  }
+  await NativeMediaSniffer.startLiveSession({
+    url: options.url,
+    referrer: options.referrer,
+    sessionId,
+  })
+  let stopped = false
+  const stop = async () => {
+    if (stopped) return
+    stopped = true
+    await listener?.remove().catch(() => undefined)
+    await NativeMediaSniffer.stopLiveSession({ sessionId }).catch(() => undefined)
+  }
+  return { sessionId, stop }
+}
+
+export async function setNativeLiveSessionVisible(visible: boolean): Promise<void> {
+  if (Capacitor.getPlatform() !== 'android') return
+  await NativeMediaSniffer.setLiveSessionVisible({ visible }).catch(() => undefined)
+}
+
+export async function setNativeLiveSessionBounds(bounds: {
+  x: number
+  y: number
+  width: number
+  height: number
+  cornerRadius?: number
+}): Promise<void> {
+  if (Capacitor.getPlatform() !== 'android') return
+  await NativeMediaSniffer.setLiveSessionBounds(bounds).catch(() => undefined)
 }
 
 function observationIdentity(observation: MediaObservation): string {

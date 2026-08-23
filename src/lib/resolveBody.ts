@@ -13,9 +13,15 @@ import {
   discoverMediaDescriptor,
   mediaDescriptorHtml,
 } from '../features/mediaSniffer/service'
+import { shouldUseOriginPlayerSurface } from '../features/mediaSniffer/originPlayerGate'
 import { currentProxyRuntime } from '../features/proxy/runtime'
 import { resolveProxyTransport } from '../features/proxy/transport'
+import { appendRelatedCatalogHtml, extractRelatedCatalog } from '../features/catalogEngine/related'
+import { extractWebCatalogDetailMeta } from '../features/catalogEngine/detailMeta'
+import { normalizeCatalogTitle } from '../features/catalogEngine/normalize'
+import { nnyyListingUrlForDetail } from '../features/frameworkDetect/adapters/nnyy'
 import { findSource, userAgentFor, type NewsSource } from '../sources/registry'
+import { cleanSummaryText } from './cleanSummary'
 import { collectAudioSrc, ensureArticleAudioHtml } from './articleAudio'
 import {
   fetchAbsoluteFormPost,
@@ -54,6 +60,69 @@ export function pageUserAgentForArticle(
 ): string | undefined {
   const source = findSource(article.sourceId, extraSources)
   return source ? userAgentFor(source) : undefined
+}
+
+function relatedExcludeUrls(source: NewsSource | undefined): string[] {
+  return source?.frameworkHint?.categories?.map((item) => item.url) ?? []
+}
+
+/** 自定义 CMS 详情页：把上游已有的相关卡片接到正文后，不做客户端推荐。 */
+async function withRelatedFromPage(
+  resolved: ResolvedBody,
+  pageHtml: string | undefined,
+  pageUrl: string,
+  article: Article,
+  extraSources?: NewsSource[],
+  signal?: AbortSignal,
+): Promise<ResolvedBody> {
+  if (!pageHtml) return resolved
+  const source = findSource(article.sourceId, extraSources)
+  if (!source || source.kind !== 'web-catalog') return resolved
+
+  const meta = extractWebCatalogDetailMeta(pageHtml)
+  let items = extractRelatedCatalog(pageHtml, pageUrl, {
+    excludeUrls: relatedExcludeUrls(source),
+  })
+
+  if (items.length < 2 && source.frameworkHint?.framework === 'nnyy') {
+    const listingUrl = nnyyListingUrlForDetail(pageUrl)
+    if (listingUrl) {
+      const listingHtml = await fetchAbsoluteText(listingUrl, {
+        signal,
+        userAgent: pageUserAgentForArticle(article, extraSources),
+      }).catch(() => undefined)
+      if (listingHtml) {
+        items = extractRelatedCatalog(listingHtml, listingUrl, {
+          excludeUrls: [...relatedExcludeUrls(source), pageUrl],
+          maxItems: 12,
+        })
+      }
+    }
+  }
+
+  let contentHtml = resolved.contentHtml
+  if (resolved.bodySource === 'video') {
+    const synopsis =
+      meta.synopsis ||
+      normalizeCatalogTitle(cleanSummaryText(article.summary, meta.title || article.title))
+    if (synopsis && synopsis.length >= 12) {
+      const clipped = synopsis.length > 220 ? `${synopsis.slice(0, 217)}…` : synopsis
+      contentHtml = contentHtml.replace(
+        /<p>[\s\S]*?<\/p>\s*$/i,
+        `<p>${escapeHtml(clipped)}</p>`,
+      )
+    }
+  }
+
+  if (items.length) {
+    contentHtml = appendRelatedCatalogHtml(contentHtml, items)
+  }
+
+  return {
+    ...resolved,
+    title: meta.title || resolved.title,
+    contentHtml: sanitizeArticleHtml(contentHtml),
+  }
 }
 
 function stripTags(html: string): string {
@@ -914,22 +983,84 @@ export async function resolveArticleBody(
     if (article.videoUrl) return buildVideoBody(article)
     if (!article.originUrl) return buildVideoBody(article, 'failed')
 
+    // Android 自建源：原站可见表面 + 持续旁路，不走短时隐藏嗅探自动换 <video>
+    if (
+      shouldUseOriginPlayerSurface({
+        sourceId: article.sourceId,
+        contentType: article.contentType,
+      })
+    ) {
+      const base: ResolvedBody = {
+        contentHtml: sanitizeArticleHtml(
+          (article.summary || article.title)
+            .split(/\n+/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((line) => `<p>${escapeHtml(line)}</p>`)
+            .join(''),
+        ),
+        bodySource: 'video',
+      }
+      if (onMediaResolved) {
+        void fetchAbsoluteText(article.originUrl, {
+          signal,
+          userAgent: pageUserAgentForArticle(article, extraSources),
+        })
+          .then(async (pageHtml) => {
+            onMediaResolved(
+              await withRelatedFromPage(
+                base,
+                pageHtml,
+                article.originUrl,
+                article,
+                extraSources,
+                signal,
+              ),
+            )
+          })
+          .catch(() => onMediaResolved(base))
+        return base
+      }
+      const pageHtml = await fetchAbsoluteText(article.originUrl, {
+        signal,
+        userAgent: pageUserAgentForArticle(article, extraSources),
+      }).catch(() => undefined)
+      return await withRelatedFromPage(
+        base,
+        pageHtml,
+        article.originUrl,
+        article,
+        extraSources,
+        signal,
+      )
+    }
+
     if (onMediaResolved) {
       const base = buildVideoBody(article)
       void fetchAbsoluteText(article.originUrl, {
         signal,
         userAgent: pageUserAgentForArticle(article, extraSources),
       })
-        .then((pageHtml) => {
+        .then(async (pageHtml) => {
+          const withRelated = await withRelatedFromPage(
+            base,
+            pageHtml,
+            article.originUrl,
+            article,
+            extraSources,
+            signal,
+          )
+          onMediaResolved(withRelated)
           scheduleMediaDiscovery(
             {
               pageUrl: article.originUrl,
               html: pageHtml,
               runtime: true,
-              timeoutMs: 6000,
+              // 视频页需要完整加载播放器并触发媒体请求；预告片后才出正片时 9s 不够
+              timeoutMs: 12000,
               signal,
           },
-          base,
+          withRelated,
           article.title,
           article.image,
           onMediaResolved,
@@ -950,24 +1081,40 @@ export async function resolveArticleBody(
       pageUrl: article.originUrl,
       html: pageHtml,
       runtime: true,
-      timeoutMs: 6000,
+      timeoutMs: 12000,
       signal,
     }).catch(() => null)
-    if (!descriptor) return buildVideoBody(article, 'failed')
+    if (!descriptor) {
+      return await withRelatedFromPage(
+        buildVideoBody(article, 'failed'),
+        pageHtml,
+        article.originUrl,
+        article,
+        extraSources,
+        signal,
+      )
+    }
     const content = article.summary
       ? `<p>${escapeHtml(article.summary)}</p>`
       : ''
-    return {
-      contentHtml: sanitizeArticleHtml(
-        mediaDescriptorHtml(descriptor, {
-          title: article.title,
-          poster: article.image,
-          contentHtml: content,
-        }),
-      ),
-      image: article.image,
-      bodySource: 'video',
-    }
+    return await withRelatedFromPage(
+      {
+        contentHtml: sanitizeArticleHtml(
+          mediaDescriptorHtml(descriptor, {
+            title: article.title,
+            poster: article.image,
+            contentHtml: content,
+          }),
+        ),
+        image: article.image,
+        bodySource: 'video',
+      },
+      pageHtml,
+      article.originUrl,
+      article,
+      extraSources,
+      signal,
+    )
   }
 
   const netease = await resolveNetEaseArticleBody(article, signal).catch(() => null)
@@ -1085,7 +1232,14 @@ export async function resolveArticleBody(
     if (isScrapeNoticeBody(extracted.contentHtml)) {
       throw new Error('原站仅返回反爬声明')
     }
-    const resolved = mediaBase || withArticleAudio({ ...extracted, resolvedOriginUrl }, article, pageHtml)
+    const resolved = await withRelatedFromPage(
+      mediaBase || withArticleAudio({ ...extracted, resolvedOriginUrl }, article, pageHtml),
+      pageHtml,
+      pageUrl,
+      article,
+      extraSources,
+      signal,
+    )
     if (mediaBase && mediaOptions) {
       scheduleMediaDiscovery(
         mediaOptions,

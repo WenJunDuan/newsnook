@@ -61,7 +61,7 @@ export function OptionPickerDialog<T extends string>({
         aria-modal="true"
         aria-labelledby={titleId}
         className="flex max-h-[min(78vh,520px)] w-full max-w-sm flex-col overflow-hidden rounded-t-3xl border border-haze bg-ink-raised shadow-2xl md:rounded-2xl"
-        style={{ paddingBottom: 'max(var(--sab, 0px), 12px)' }}
+        style={{ paddingBottom: 'calc(var(--sab, 0px) + 12px)' }}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex shrink-0 justify-center pt-2.5 pb-1 md:hidden" aria-hidden>

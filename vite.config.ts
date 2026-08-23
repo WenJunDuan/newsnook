@@ -14,6 +14,7 @@ import { normalizeProxyPrefs } from './src/features/proxy/config.ts'
 import { planNodeUpstream } from './src/features/proxy/nodeAgent.ts'
 import type { ProxyPrefs } from './src/features/proxy/types.ts'
 import { type NewsSource } from './src/sources/registry.ts'
+import { applyWebViewCssCompat } from './scripts/webview-css-compat.ts'
 
 const { version: appVersion } = JSON.parse(readFileSync('./package.json', 'utf-8')) as {
   version: string
@@ -672,7 +673,9 @@ function unlayerCssPlugin(): Plugin {
             css += '\n' + gapFallbacks.join('\n')
           }
 
-          file.source = css
+          // lightningcss 不降级 :where()（Chrome 88+）；剥离 @property 后部分
+          // Android WebView 又匹配不到 Tailwind 的 @supports 变量兜底 → divide-y 等失效
+          file.source = applyWebViewCssCompat(css)
         }
       }
     },
