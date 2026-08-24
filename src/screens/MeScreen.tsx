@@ -186,12 +186,12 @@ export function MeScreen({
           <SettingsRow
             icon={BotMessageSquare}
             title="AI 助手"
-            caption="问答 · 查找感兴趣的新闻 · 企业舆情报告"
+            caption="问答 · 查找新闻 · 舆情 · 模型接口"
             onClick={onOpenAiAssistant}
           />
           <SettingsRow
             icon={Sparkles}
-            title="AI 智读设置"
+            title="智读与精选"
             caption={aiSummary}
             onClick={onOpenAiSettings}
           />

@@ -1,3 +1,4 @@
+import { normalizeReadingPrefs } from './readingPrefs'
 import type { AiConfig, AiPrefs } from './types'
 
 export const DEFAULT_AI_CONFIG: AiConfig = {
@@ -10,6 +11,7 @@ export const DEFAULT_AI_PREFS: AiPrefs = {
   config: DEFAULT_AI_CONFIG,
   recommendEnabled: true,
   digestEnabled: true,
+  readingPrefs: { categories: {}, publishers: {} },
 }
 
 function normalizeAiConfig(value: unknown): AiConfig {
@@ -36,6 +38,7 @@ export function normalizeAiPrefs(value: unknown): AiPrefs {
       typeof input.digestEnabled === 'boolean'
         ? input.digestEnabled
         : DEFAULT_AI_PREFS.digestEnabled,
+    readingPrefs: normalizeReadingPrefs(input.readingPrefs),
   }
 }
 
@@ -45,12 +48,16 @@ export function isAiConfigured(prefs: AiPrefs): boolean {
   return Boolean(apiKey.trim() && endpoint.trim() && model.trim())
 }
 
-export function aiSummaryLabel(prefs: AiPrefs): string {
-  if (!isAiConfigured(prefs)) return '未配置 · 自备 OpenAI 兼容接口'
+export function aiFeaturesSummaryLabel(prefs: AiPrefs): string {
   const features = [
-    prefs.digestEnabled ? 'AI 解读' : null,
-    prefs.recommendEnabled ? 'AI 精选' : null,
+    prefs.digestEnabled ? '解读' : null,
+    prefs.recommendEnabled ? '精选与偏好' : null,
     '助手与舆情',
   ].filter(Boolean)
-  return `${prefs.config.model} · ${features.join(' / ')}`
+  return features.join(' / ')
+}
+
+export function aiSummaryLabel(prefs: AiPrefs): string {
+  if (!isAiConfigured(prefs)) return '未配置 · 自备 OpenAI 兼容接口'
+  return `${prefs.config.model} · ${aiFeaturesSummaryLabel(prefs)}`
 }

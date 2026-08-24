@@ -17,6 +17,9 @@ export interface Article {
   sourceLabel: string
   sourceGroup: SourceGroup
   originUrl: string
+  /** 打开时所在分类轨；仅正文缓存 / 阅读记录使用，不进列表缓存 */
+  openedCategoryId?: string
+  openedCategoryLabel?: string
   contentType?: ArticleContentType
   /** 网易等视频条目的可播放地址 */
   videoUrl?: string

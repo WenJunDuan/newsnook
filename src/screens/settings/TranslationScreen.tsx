@@ -611,9 +611,9 @@ export function TranslationScreen({ prefs, onChange, onBack }: Props) {
               value={activeCloud.endpoint}
               placeholder={
                 prefs.provider === 'deeplx'
-                  ? 'https://你的服务/translate'
+                  ? 'https://你的服务/translate 或 http://127.0.0.1:1188/translate'
                   : prefs.provider === 'openai'
-                    ? 'https://api.openai.com/v1'
+                    ? 'https://api.openai.com/v1 或 http://127.0.0.1:11434/v1'
                     : 'https://…'
               }
               onChange={(endpoint) => updateCloud({ endpoint })}

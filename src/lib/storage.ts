@@ -243,7 +243,12 @@ export interface CachedPagingMeta {
 }
 
 function compactCachedArticle(article: Article): Article {
-  const { contentHtml: _contentHtml, ...metadata } = article
+  const {
+    contentHtml: _contentHtml,
+    openedCategoryId: _openedCategoryId,
+    openedCategoryLabel: _openedCategoryLabel,
+    ...metadata
+  } = article
   return metadata
 }
 

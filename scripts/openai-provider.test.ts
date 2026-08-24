@@ -131,9 +131,18 @@ assert.throws(
   () => assertOpenAiConfig({ apiKey: 'k', endpoint: 'https://api.openai.com/v1', model: '' }),
   /Model/,
 )
+assert.doesNotThrow(() =>
+  assertOpenAiConfig({ apiKey: 'k', endpoint: 'http://insecure.example/v1', model: 'x' }),
+)
+assert.doesNotThrow(() =>
+  assertOpenAiConfig({ apiKey: 'k', endpoint: 'http://127.0.0.1:11434/v1', model: 'llama3' }),
+)
+assert.doesNotThrow(() =>
+  assertOpenAiConfig({ apiKey: 'k', endpoint: 'http://8.8.8.8/v1', model: 'x' }),
+)
 assert.throws(
-  () => assertOpenAiConfig({ apiKey: 'k', endpoint: 'http://insecure.example/v1', model: 'x' }),
-  /HTTPS/,
+  () => assertOpenAiConfig({ apiKey: 'k', endpoint: 'ftp://files.example/v1', model: 'x' }),
+  /HTTP 或 HTTPS/,
 )
 
 const systemAuto = openAiTranslationSystemPrompt('auto', 'zh-Hans', 'paragraph')

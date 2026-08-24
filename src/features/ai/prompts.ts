@@ -17,7 +17,9 @@ export function digestUserPrompt(title: string, bodyText: string): string {
 /** AI 精选：根据本地阅读画像从候选列表挑选 */
 export const PICKS_SYSTEM_PROMPT = [
   '你是用户的私人新闻编辑。根据用户的阅读偏好画像，从候选新闻列表中挑选用户最可能感兴趣的文章。',
-  '只能从候选列表中选择，最多选 8 条；兼顾兴趣匹配与题材多样性，避免同一事件重复选取。',
+  '优先匹配分类侧重与出品方侧重较高的候选。列表前段多为当前分类，后段含兴趣跨分类稿。',
+  '同时保留少量多样性，避免同一事件或同一出品方占满。',
+  '只能从候选列表中选择，最多选 8 条。',
   '只输出 JSON 数组，不要输出任何其它文字，格式：',
   '[{"index":候选序号,"reason":"不超过 30 字的推荐理由，说明与用户兴趣的关联"}]',
   '如候选中没有值得推荐的内容，输出 []。理由使用简体中文。',
@@ -27,7 +29,12 @@ export function picksUserPrompt(
   snapshot: InterestSnapshot,
   candidateLines: string[],
 ): string {
+  const formatPrefs = (items: { label: string; weight: number }[]) =>
+    items.map((item) => `${item.label} ${item.weight}`).join('、')
   const profile = [
+    snapshot.portrait ? `画像：${snapshot.portrait}` : null,
+    snapshot.categoryPrefs.length ? `分类侧重：${formatPrefs(snapshot.categoryPrefs)}` : null,
+    snapshot.publisherPrefs.length ? `出品方侧重：${formatPrefs(snapshot.publisherPrefs)}` : null,
     snapshot.topSources.length ? `常读来源：${snapshot.topSources.join('、')}` : null,
     snapshot.recentReadTitles.length
       ? `最近读过：\n${snapshot.recentReadTitles.map((title) => `- ${title}`).join('\n')}`
@@ -69,6 +76,15 @@ export const ENTITY_TERMS_SYSTEM_PROMPT = [
   '每类最多 8 个，不要收录「公司」「集团」「科技」这类无区分度的通用词，也不要收录长度小于 2 的词。',
   '不确定的关联不要编造，宁可少给。',
 ].join('\n')
+
+export const PORTRAIT_SYSTEM_PROMPT = [
+  '你是新闻阅读应用里的画像编辑。根据用户阅读统计写一句不超过 40 字的简体中文画像。',
+  '必须点出数字（篇数或侧重），不要引号、不要前后解释、不要换行。',
+].join('\n')
+
+export function portraitUserPrompt(localSentence: string): string {
+  return `请把下面这句统计改写成更顺口的一句话，保留全部数字：\n${localSentence}`
+}
 
 export function entityTermsUserPrompt(entity: string, seedTitles: string[]): string {
   const seeds = seedTitles.length

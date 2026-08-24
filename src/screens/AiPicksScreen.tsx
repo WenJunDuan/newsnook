@@ -3,7 +3,9 @@ import { LoaderCircle, RefreshCw, Sparkles } from 'lucide-react'
 
 import { SettingsHint, SettingsShell } from '../components/SettingsShell'
 import { buildInterestSnapshot, hasInterestSignal } from '../features/ai/interest'
-import { buildPickCandidates, pickArticles } from '../features/ai/recommend'
+import { loadReadLog } from '../features/ai/readLog'
+import { buildReadingProfile, scoreArticleByProfile } from '../features/ai/readingPrefs'
+import { mixPickCandidates, pickArticles } from '../features/ai/recommend'
 import { isAiConfigured } from '../features/ai/config'
 import type { AiPrefs } from '../features/ai/types'
 import { articleRelativeTime } from '../lib/time'
@@ -11,8 +13,11 @@ import type { Article } from '../lib/types'
 
 interface Props {
   prefs: AiPrefs
-  /** 当前分类下的文章列表（精选候选池） */
+  /** 当前分类下的文章（召回路 A） */
   articles: Article[]
+  /** 已加载的全部文章（召回路 B：兴趣跨分类） */
+  poolArticles: Article[]
+  sourceInterestIds: Record<string, string[]>
   categoryLabel?: string
   history: Article[]
   later: Article[]
@@ -30,6 +35,8 @@ interface PickItem {
 export function AiPicksScreen({
   prefs,
   articles,
+  poolArticles,
+  sourceInterestIds,
   categoryLabel,
   history,
   later,
@@ -49,7 +56,8 @@ export function AiPicksScreen({
   /** 进入页面只自动生成一次；失败后由用户手动重试，避免错误态循环请求 */
   const autoRanRef = useRef(false)
 
-  const snapshot = buildInterestSnapshot({ history, later })
+  const profile = buildReadingProfile(loadReadLog(), prefs.readingPrefs)
+  const snapshot = buildInterestSnapshot({ history, later, profile })
 
   const run = useCallback(
     async (excludeShown: boolean) => {
@@ -59,14 +67,18 @@ export function AiPicksScreen({
       setLoading(true)
       setError('')
       try {
-        const candidates = buildPickCandidates({
+        const readingProfile = buildReadingProfile(loadReadLog(), prefs.readingPrefs)
+        const candidates = mixPickCandidates({
           articles,
+          outNetwork: poolArticles,
           readIds,
           excludeIds: excludeShown ? shownIdsRef.current : undefined,
+          scoreOf: (item) =>
+            scoreArticleByProfile(item, readingProfile, sourceInterestIds[item.sourceId] ?? []),
         })
         const result = await pickArticles(
           prefs.config,
-          buildInterestSnapshot({ history, later }),
+          buildInterestSnapshot({ history, later, profile: readingProfile }),
           candidates,
           controller.signal,
         )
@@ -82,16 +94,16 @@ export function AiPicksScreen({
         setLoading(false)
       }
     },
-    [articles, history, later, prefs.config, readIds],
+    [articles, history, later, poolArticles, prefs.config, prefs.readingPrefs, readIds, sourceInterestIds],
   )
 
   useEffect(() => {
-    if (!configured || !articles.length) return
+    if (!configured || (!articles.length && !poolArticles.length)) return
     if (autoRanRef.current) return
     autoRanRef.current = true
     void run(false)
     // 进入页面自动生成一次；后续由「换一批」或错误态的重试按钮驱动
-  }, [configured, articles.length, run])
+  }, [configured, articles.length, poolArticles.length, run])
 
   useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -100,8 +112,8 @@ export function AiPicksScreen({
       title="AI 精选"
       caption={
         categoryLabel
-          ? `${categoryLabel} · 按你的阅读记录挑选 · 不改变时间线`
-          : '按你的阅读记录挑选 · 不改变时间线'
+          ? `${categoryLabel} · 按阅读偏好挑选（含跨分类）· 不改变时间线`
+          : '按阅读偏好挑选 · 不改变时间线'
       }
       action={
         configured && articles.length > 0 ? (
@@ -135,20 +147,20 @@ export function AiPicksScreen({
             onClick={onOpenAiSettings}
             className="mt-5 inline-flex items-center gap-1.5 rounded-full border border-cinnabar/50 bg-cinnabar/12 px-4 py-2 text-[12.5px] text-paper"
           >
-            去配置 AI 智读
+            去配置 AI 助手
           </button>
         </div>
       )}
 
-      {configured && !articles.length && (
+      {configured && !articles.length && !poolArticles.length && (
         <p className="page-x py-14 text-center text-[13px] leading-relaxed text-paper-faint">
-          当前分类还没有已加载的文章。
+          还没有已加载的文章。
           <br />
           先回首页刷新，再来生成精选。
         </p>
       )}
 
-      {configured && articles.length > 0 && (
+      {configured && (articles.length > 0 || poolArticles.length > 0) && (
         <>
           {loading && (
             <div className="flex items-center justify-center gap-2.5 py-14 text-[12.5px] text-paper-muted">
@@ -218,7 +230,7 @@ export function AiPicksScreen({
             </SettingsHint>
           )}
           <SettingsHint>
-            精选只发送候选文章的标题与摘要、以及本机最近阅读的标题级画像给你配置的接口；结果不影响首页时间线排序。
+            精选只发送候选文章的标题与摘要、以及本机阅读偏好（分类 / 出品方侧重与最近标题）给你配置的接口；结果不影响首页时间线排序。
           </SettingsHint>
         </>
       )}
