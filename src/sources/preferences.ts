@@ -31,6 +31,8 @@ import {
   normalizeProxyPrefs,
 } from '../features/proxy/config'
 import type { ProxyPrefs } from '../features/proxy/types'
+import { DEFAULT_AI_PREFS, normalizeAiPrefs } from '../features/ai/config'
+import type { AiPrefs } from '../features/ai/types'
 import { CATEGORIES, findCategory, PORTAL_VISIBLE_CATEGORY_IDS, type CategoryId, type NewsCategory } from './categories'
 import {
   SOURCES,
@@ -98,6 +100,8 @@ export interface Preferences {
   customScheme?: CustomSchemePrefs
   translation: TranslationPrefs
   proxy: ProxyPrefs
+  /** AI 智读：解读 / 精选 / 助手；接口配置只存本机 */
+  ai: AiPrefs
   /** 切换/滑动到分类页时是否自动刷新（关闭时保留滚动阅读位置） */
   autoRefreshOnCategorySwitch?: boolean
   /**
@@ -163,6 +167,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   scheme: DEFAULT_THEME_SCHEME,
   translation: DEFAULT_TRANSLATION_PREFS,
   proxy: DEFAULT_PROXY_PREFS,
+  ai: DEFAULT_AI_PREFS,
   autoRefreshOnCategorySwitch: true,
   einkMode: false,
   wifiOnlyAutoLoadMedia: false,
@@ -338,6 +343,7 @@ export function normalizePreferences(raw: unknown): Preferences {
     customScheme,
     translation: normalizeTranslationPrefs(input.translation),
     proxy: normalizeProxyPrefs(input.proxy),
+    ai: normalizeAiPrefs(input.ai),
     autoRefreshOnCategorySwitch:
       typeof input.autoRefreshOnCategorySwitch === 'boolean'
         ? input.autoRefreshOnCategorySwitch
@@ -999,6 +1005,10 @@ export function updateProxyPrefs(
 
 export function resetProxyPrefs(prefs: Preferences): Preferences {
   return { ...prefs, proxy: DEFAULT_PROXY_PREFS }
+}
+
+export function updateAiPrefs(prefs: Preferences, ai: AiPrefs): Preferences {
+  return { ...prefs, ai: normalizeAiPrefs(ai) }
 }
 
 export function setAutoRefreshOnCategorySwitch(
