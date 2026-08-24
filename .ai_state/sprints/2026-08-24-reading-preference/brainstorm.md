@@ -3,13 +3,13 @@ sprint_slug: "2026-08-24-reading-preference"
 triggered_at: "2026-08-24 15:18"
 trigger_reason: user_explicit
 converged: true
-next_route: "plan"
+next_route: "idle"
 req_ref: requirements/reading-preference.md
 ---
 
 # Brainstorm — 2026-08-24-reading-preference
 
-> distilled log。`converged: false`：设计细节尚未与用户确认。
+> distilled log。已收敛并实现；后补入口拆分与 4 小时画像刷新。
 
 ## 用户最初描述
 
@@ -40,15 +40,12 @@ req_ref: requirements/reading-preference.md
 - 决定: 可借鉴 X For You 的漏斗与双路召回**思想**，不搬服务端模型、不改首页时间线。出处: `compound/2026-08-24-explore-x-for-you-borrow.md`。被否: 把默认时间线做成 For You。
 - 决定: 精选双路约 70% 当前分类 + 30% 兴趣跨分类；同出品方衰减。理由: 用户按推荐开工。被否: 精选只看当前分类。
 - 决定: 近 7 天 + 今日加权、拖动锁定、一天一篇一次。理由: 用户按推荐默认。
+- 决定: 取消独立「AI 模型」页，接口配置放进「AI 助手 → 配置」。理由: 用户要求。被否: 单独模型设置页。
+- 决定: 画像每 4 小时按阅读日志定时调整。理由: 用户要求。被否: 仅打开设置时润色。
 
 ## Surfaced assumptions (被挖出的隐含假设)
 
-下列曾被 exploratory 代码当成事实，**未确认**：
-
-- 统计窗 = 近 7 天，今日篇目加权 2
-- 同一文章同一天只计一次
-- 拖动条形即锁定，自动统计不再覆盖该项
-- 精选候选仍来自当前分类列表（与「双路召回」草案冲突，待 Q2）
+已收口，无残留未确认假设。
 
 ## Open questions (未决问题, 留给确认)
 
@@ -62,6 +59,5 @@ req_ref: requirements/reading-preference.md
 
 ## 下一步路由
 
-- [ ] plan（确认后若仍是单切片 Feature）
-- [ ] roadmap（确认后若「落盘阅读事件」与「精选使用画像」可独立验收）
-- [x] 当前：与用户逐条确认 Open questions
+- [x] 已实现并 merge-both 进 `release`（`00aff2f`），origin 已推送
+- 正式 PACE review 未跑；用户选择直接合入 release
