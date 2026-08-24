@@ -1,5 +1,6 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core'
 
+import { assertHttpApiEndpoint } from '../../lib/apiEndpoint'
 import {
   extractOpenAiChatContent,
   normalizeOpenAiBaseUrl,
@@ -17,7 +18,7 @@ export interface ChatCompleteOptions {
   signal?: AbortSignal
 }
 
-/** 校验并返回规范化 Base URL；HTTPS 强制与翻译云配置一致 */
+/** 校验并返回规范化 Base URL；允许 HTTP 或 HTTPS */
 export function assertAiConfig(config: AiConfig): string {
   if (!config.apiKey.trim()) throw new Error('请先填写 API Key')
   if (!config.endpoint.trim()) throw new Error('请先填写 API 地址')
@@ -29,7 +30,7 @@ export function assertAiConfig(config: AiConfig): string {
   } catch {
     throw new Error('API 地址格式不正确')
   }
-  if (parsed.protocol !== 'https:') throw new Error('为保护 API Key，API 地址必须使用 HTTPS')
+  assertHttpApiEndpoint(parsed)
   return base
 }
 

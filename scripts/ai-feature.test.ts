@@ -8,6 +8,7 @@ import {
 } from '../src/features/ai/assistant'
 import { extractJsonPayload } from '../src/features/ai/client'
 import { DEFAULT_AI_PREFS, isAiConfigured, normalizeAiPrefs } from '../src/features/ai/config'
+import { picksUserPrompt } from '../src/features/ai/prompts'
 import { parseDigestPayload } from '../src/features/ai/digest'
 import { buildInterestSnapshot } from '../src/features/ai/interest'
 import {
@@ -16,7 +17,13 @@ import {
   searchArticles,
   searchArticlesByEntity,
 } from '../src/features/ai/pool'
-import { buildPickCandidates, parsePicksPayload } from '../src/features/ai/recommend'
+import {
+  buildPickCandidates,
+  IN_NETWORK_RATIO,
+  MAX_CANDIDATES,
+  mixPickCandidates,
+  parsePicksPayload,
+} from '../src/features/ai/recommend'
 import { htmlToPlainText } from '../src/features/ai/text'
 import type { Article } from '../src/lib/types'
 
@@ -54,6 +61,14 @@ console.log('Testing normalizeAiPrefs...')
   const dirty = normalizeAiPrefs({ config: { apiKey: 42 }, recommendEnabled: 'yes' })
   assert.equal(dirty.config.apiKey, '')
   assert.equal(dirty.recommendEnabled, true)
+  assert.deepEqual(dirty.readingPrefs, { categories: {}, publishers: {} })
+
+  const withPrefs = normalizeAiPrefs({
+    readingPrefs: { categories: { tech: 80 }, publishers: { latepost: 120, bad: 'x' } },
+  })
+  assert.equal(withPrefs.readingPrefs.categories.tech, 80)
+  assert.equal(withPrefs.readingPrefs.publishers.latepost, 100)
+  assert.equal(withPrefs.readingPrefs.publishers.bad, undefined)
 }
 
 console.log('Testing extractJsonPayload...')
@@ -107,12 +122,55 @@ console.log('Testing buildPickCandidates & parsePicksPayload...')
     ['new-unread', 'old-unread', 'read-1'],
   )
 
+  const scored = buildPickCandidates({
+    articles,
+    readIds: new Set(['read-1']),
+    scoreOf: (item) => (item.id === 'old-unread' ? 90 : 0),
+  })
+  assert.deepEqual(
+    scored.map((item) => item.id),
+    ['old-unread', 'new-unread', 'read-1'],
+  )
+
   const excluded = buildPickCandidates({
     articles,
     readIds: new Set(),
     excludeIds: new Set(['new-unread']),
   })
   assert.ok(!excluded.some((item) => item.id === 'new-unread'))
+
+  const inNetwork = Array.from({ length: 50 }, (_, index) =>
+    makeArticle({
+      id: `in-${index}`,
+      title: `当前 ${index}`,
+      sourceId: index < 40 ? 'latepost' : 'ithome',
+      publishedAt: 1000 - index,
+    }),
+  )
+  const outNetwork = Array.from({ length: 40 }, (_, index) =>
+    makeArticle({
+      id: `out-${index}`,
+      title: `跨类 ${index}`,
+      sourceId: 'cls',
+      publishedAt: 500 - index,
+    }),
+  )
+  const mixed = mixPickCandidates({
+    articles: inNetwork,
+    outNetwork,
+    readIds: new Set(),
+    scoreOf: () => 10,
+  })
+  assert.equal(mixed.length, MAX_CANDIDATES)
+  const inIds = new Set(inNetwork.map((item) => item.id))
+  const inCount = mixed.filter((item) => inIds.has(item.id)).length
+  assert.equal(inCount, Math.round(MAX_CANDIDATES * IN_NETWORK_RATIO))
+  assert.ok(mixed.some((item) => item.id.startsWith('out-')))
+  const firstSameAuthorRun = mixed.findIndex((item, index) => {
+    if (index === 0) return false
+    return item.sourceId === mixed[0].sourceId
+  })
+  assert.ok(firstSameAuthorRun > 1)
 
   const picks = parsePicksPayload(
     [
@@ -144,6 +202,30 @@ console.log('Testing interest snapshot...')
   assert.equal(snapshot.topSources[0], '晚点')
   assert.equal(snapshot.recentReadTitles.length, 3)
   assert.deepEqual(snapshot.laterTitles, ['稍后读文章'])
+  assert.deepEqual(snapshot.categoryPrefs, [])
+  assert.deepEqual(snapshot.publisherPrefs, [])
+  assert.equal(snapshot.portrait, '')
+
+  const withProfile = buildInterestSnapshot({
+    history,
+    later,
+    profile: {
+      todayCount: 1,
+      windowCount: 3,
+      categories: [
+        { id: 'tech', label: '科技', auto: 40, weight: 40, locked: false, count: 2, preferred: true },
+      ],
+      publishers: [
+        { id: 'latepost', label: '晚点', auto: 70, weight: 70, locked: false, count: 2, preferred: true },
+      ],
+      portrait: '近 7 天读了 3 篇，偏科技 40（2篇）；常看晚点 70（2篇）。',
+    },
+  })
+  assert.deepEqual(withProfile.categoryPrefs, [{ label: '科技', weight: 40 }])
+  const prompt = picksUserPrompt(withProfile, ['候选一条'])
+  assert.match(prompt, /画像：近 7 天读了 3 篇/)
+  assert.match(prompt, /分类侧重：科技 40/)
+  assert.match(prompt, /出品方侧重：晚点 70/)
 }
 
 console.log('Testing query terms & local search...')

@@ -5,6 +5,7 @@ import {
   BotMessageSquare,
   LoaderCircle,
   Newspaper,
+  Settings2,
   Sparkles,
   Trash2,
 } from 'lucide-react'
@@ -17,6 +18,7 @@ import {
   runAssistantTurn,
   runSentimentReport,
 } from '../features/ai/assistant'
+import { AiModelConfigForm } from '../features/ai/components/AiModelConfigForm'
 import { isAiConfigured } from '../features/ai/config'
 import { loadArticlePool } from '../features/ai/pool'
 import { clearChatHistory, loadChatHistory, saveChatHistory } from '../features/ai/storage'
@@ -26,14 +28,16 @@ import type {
   ChatArticleRef,
   SentimentStage,
 } from '../features/ai/types'
+import type { CloudTranslationConfig } from '../features/translation/types'
 import type { Article } from '../lib/types'
 
 interface Props {
   prefs: AiPrefs
   /** 当前会话已拉取的文章，并入本地缓存池做检索 */
   liveArticles: Article[]
+  translationOpenAi?: CloudTranslationConfig
+  onChange: (prefs: AiPrefs) => void
   onOpenArticle: (article: Article) => void
-  onOpenAiSettings: () => void
   onBack: () => void
 }
 
@@ -59,12 +63,14 @@ const QUICK_ACTIONS: { label: string; icon: typeof Sparkles; input: string; send
 export function AiAssistantScreen({
   prefs,
   liveArticles,
+  translationOpenAi,
+  onChange,
   onOpenArticle,
-  onOpenAiSettings,
   onBack,
 }: Props) {
   const reduced = useReducedMotion()
   const configured = isAiConfigured(prefs)
+  const [configOpen, setConfigOpen] = useState(!configured)
   const [messages, setMessages] = useState<AiChatMessage[]>(() => loadChatHistory())
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -195,26 +201,36 @@ export function AiAssistantScreen({
                     AI 助手
                   </h1>
                   <p className="mt-1.5 font-mono text-[10px] lg:text-[11px] tracking-[0.14em] text-paper-faint">
-                    问答 · 查找新闻 · 企业舆情 · 本地检索 {pool.length} 篇
+                    问答 · 查找新闻 · 舆情：企业名 · 检索本地列表 {pool.length} 篇
                   </p>
                 </div>
-                {messages.length > 0 && (
+                <div className="flex shrink-0 items-center gap-1.5">
                   <button
                     type="button"
-                    onClick={() => {
-                      abortRef.current?.abort()
-                      setBusy(false)
-                      setStageText('')
-                      setMessages([])
-                      setError('')
-                      clearChatHistory()
-                    }}
-                    className="flex shrink-0 items-center gap-1.5 rounded-full border border-haze bg-paper/5 px-3 py-1.5 font-mono text-[11px] text-paper-muted hover:text-paper transition-colors"
+                    onClick={() => setConfigOpen((open) => !open)}
+                    className="flex items-center gap-1.5 rounded-full border border-haze bg-paper/5 px-3 py-1.5 font-mono text-[11px] text-paper-muted hover:text-paper transition-colors"
                   >
-                    <Trash2 size={12} />
-                    清空对话
+                    <Settings2 size={12} />
+                    配置
                   </button>
-                )}
+                  {messages.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        abortRef.current?.abort()
+                        setBusy(false)
+                        setStageText('')
+                        setMessages([])
+                        setError('')
+                        clearChatHistory()
+                      }}
+                      className="flex items-center gap-1.5 rounded-full border border-haze bg-paper/5 px-3 py-1.5 font-mono text-[11px] text-paper-muted hover:text-paper transition-colors"
+                    >
+                      <Trash2 size={12} />
+                      清空对话
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -224,21 +240,25 @@ export function AiAssistantScreen({
 
       <div ref={listRef} className="scroll-hidden min-h-0 flex-1 overflow-y-auto">
         <div className="page-x lg:px-8 max-w-4xl mx-auto w-full pb-4">
-          {!configured && (
+          {configOpen && (
+            <div className="pt-4 pb-2">
+              <AiModelConfigForm
+                prefs={prefs}
+                translationOpenAi={translationOpenAi}
+                onChange={onChange}
+              />
+              <p className="mt-3 font-mono text-[10px] leading-relaxed text-paper-faint">
+                接口配好后即可对话。智读开关与精选偏好在「智读与精选」。
+              </p>
+            </div>
+          )}
+
+          {!configured && !configOpen && (
             <div className="py-14 text-center">
               <BotMessageSquare size={24} strokeWidth={1.4} className="mx-auto text-paper-faint" />
               <p className="mt-4 text-[13.5px] leading-relaxed text-paper-muted">
-                AI 助手需要先配置你自己的 OpenAI 兼容接口。
-                <br />
-                API Key 只保存在这台设备。
+                先在上方配置 OpenAI 兼容接口。
               </p>
-              <button
-                type="button"
-                onClick={onOpenAiSettings}
-                className="mt-5 inline-flex items-center gap-1.5 rounded-full border border-cinnabar/50 bg-cinnabar/12 px-4 py-2 text-[12.5px] text-paper"
-              >
-                去配置 AI 智读
-              </button>
             </div>
           )}
 

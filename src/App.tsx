@@ -54,7 +54,17 @@ import { TypographyScreen } from './screens/settings/TypographyScreen'
 import { TranslationScreen } from './screens/settings/TranslationScreen'
 import { ProxyScreen } from './screens/settings/ProxyScreen'
 import { AiSettingsScreen } from './screens/settings/AiSettingsScreen'
-import { aiSummaryLabel } from './features/ai/config'
+import { aiFeaturesSummaryLabel, isAiConfigured } from './features/ai/config'
+import { refreshReadingPortrait } from './features/ai/portrait'
+import { appendReadLog } from './features/ai/readLog'
+import {
+  buildSourceInterestMap,
+  interestCategoriesForSource,
+  MIX_CATEGORY_ID,
+  msUntilPortraitRefresh,
+  PORTRAIT_REFRESH_MS,
+} from './features/ai/readingPrefs'
+import { loadPortraitCache } from './features/ai/storage'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import {
   BRAND_TITLE,
@@ -101,6 +111,7 @@ import {
   updateCustomSource,
   updateTypography,
   visibleCategories,
+  orderedCategories,
   type TypographyPrefs,
 } from './sources/preferences'
 import { SOURCES, findSource } from './sources/registry'
@@ -250,6 +261,49 @@ export default function App() {
     setCacheSnapshot(readCacheSnapshot())
   }, [])
 
+  const aiPrefsRef = useRef(prefs.ai)
+  aiPrefsRef.current = prefs.ai
+  useEffect(() => {
+    let cancelled = false
+    let timer = 0
+    let inflight = false
+    const run = async () => {
+      if (inflight || cancelled) return
+      inflight = true
+      try {
+        const ai = aiPrefsRef.current
+        await refreshReadingPortrait({
+          config: ai.config,
+          configured: isAiConfigured(ai),
+          overrides: ai.readingPrefs,
+        })
+      } finally {
+        inflight = false
+        if (!cancelled) arm()
+      }
+    }
+    const arm = () => {
+      window.clearTimeout(timer)
+      const wait = Math.min(
+        PORTRAIT_REFRESH_MS,
+        Math.max(1000, msUntilPortraitRefresh(loadPortraitCache()?.adjustedAt)),
+      )
+      timer = window.setTimeout(() => {
+        void run()
+      }, wait)
+    }
+    void run()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void run()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [prefs.ai.config.apiKey, prefs.ai.config.endpoint, prefs.ai.config.model])
+
   useEffect(() => {
     const needsSnapshot =
       tab === 'me' ||
@@ -375,6 +429,7 @@ export default function App() {
         setSettingsRoute({ name: 'appearance' })
         return
       }
+
       if (settingsRoute) {
         setSettingsRoute(null)
         return
@@ -468,6 +523,18 @@ export default function App() {
     [availableArticles, categorySourceSet],
   )
 
+  const sourceInterestIds = useMemo(
+    () =>
+      buildSourceInterestMap(
+        orderedCategories(prefs).map((category) => ({
+          id: category.id,
+          label: category.label,
+          sourceIds: sourceIdsForCategoryWithPrefs(category.id, prefs, enabledIds),
+        })),
+      ),
+    [enabledIds, prefs],
+  )
+
   const articlesForCategory = useCallback(
     (id: CategoryId) => {
       const ids = new Set(sourceIdsForCategoryWithPrefs(id, prefs, enabledIds))
@@ -504,11 +571,42 @@ export default function App() {
     notifyCacheChange()
   }, [later, notifyCacheChange, prefs.customSources])
 
-  const openArticle = useCallback((article: Article) => {
-    setReaderReturnArticle(null)
-    setReading(article)
-    setReadIds((prev) => new Set(prev).add(article.id))
-  }, [])
+  const openArticle = useCallback(
+    (article: Article) => {
+      const interest = interestCategoriesForSource(
+        article.sourceId,
+        orderedCategories(prefs)
+          .filter((item) => item.id !== MIX_CATEGORY_ID)
+          .map((item) => ({
+            id: item.id,
+            label: item.label,
+            sourceIds: sourceIdsForCategoryWithPrefs(item.id, prefs, enabledIds),
+          })),
+      )
+      const primary = interest[0]
+      const recorded: Article = {
+        ...article,
+        openedCategoryId: primary?.id,
+        openedCategoryLabel: primary?.label,
+      }
+      setReaderReturnArticle(null)
+      setReading(recorded)
+      setReadIds((prev) => new Set(prev).add(article.id))
+      appendReadLog({
+        articleId: article.id,
+        title: article.title,
+        sourceId: article.sourceId,
+        sourceName: article.sourceName,
+        sourceLabel: article.sourceLabel,
+        sourceGroup: article.sourceGroup,
+        categoryId: primary?.id ?? MIX_CATEGORY_ID,
+        categoryLabel: primary?.label ?? '综合',
+        interestCategories: interest,
+        openedAt: Date.now(),
+      })
+    },
+    [enabledIds, prefs],
+  )
 
   const toggleLater = useCallback((article: Article) => {
     if (laterRef.current.some((item) => item.id === article.id)) {
@@ -648,7 +746,7 @@ export default function App() {
     return `${mode} · ${prefs.proxy.proxyUrl ? '已配置' : '未填写地址'}`
   }, [prefs.proxy])
 
-  const aiSummary = useMemo(() => aiSummaryLabel(prefs.ai), [prefs.ai])
+  const aiSummary = useMemo(() => aiFeaturesSummaryLabel(prefs.ai), [prefs.ai])
 
   const renderSettings = () => {
     if (!settingsRoute) return null
@@ -735,7 +833,9 @@ export default function App() {
       return (
         <AiSettingsScreen
           prefs={prefs.ai}
-          translationOpenAi={prefs.translation.cloud.openai}
+          seedCategories={categories
+            .filter((item) => item.id !== MIX_CATEGORY_ID)
+            .map((item) => ({ id: item.id, label: item.label }))}
           onChange={(ai) => update((prev) => updateAiPrefs(prev, ai))}
           onBack={() => setSettingsRoute(null)}
         />
@@ -747,8 +847,9 @@ export default function App() {
         <AiAssistantScreen
           prefs={prefs.ai}
           liveArticles={fetchedArticles}
+          translationOpenAi={prefs.translation.cloud.openai}
+          onChange={(ai) => update((prev) => updateAiPrefs(prev, ai))}
           onOpenArticle={openArticle}
-          onOpenAiSettings={() => setSettingsRoute({ name: 'ai' })}
           onBack={() => setSettingsRoute(null)}
         />
       )
@@ -759,12 +860,14 @@ export default function App() {
         <AiPicksScreen
           prefs={prefs.ai}
           articles={articles}
+          poolArticles={availableArticles}
+          sourceInterestIds={sourceInterestIds}
           categoryLabel={activeCategory?.label}
           history={cachedHistory}
           later={later}
           readIds={readIds}
           onOpen={openArticle}
-          onOpenAiSettings={() => setSettingsRoute({ name: 'ai' })}
+          onOpenAiSettings={() => setSettingsRoute({ name: 'ai-assistant' })}
           onBack={() => setSettingsRoute(null)}
         />
       )
@@ -1200,7 +1303,7 @@ export default function App() {
               setReaderReturnArticle(reading)
               setReading(null)
               setTab('me')
-              setSettingsRoute({ name: 'ai' })
+              setSettingsRoute({ name: 'ai-assistant' })
             }}
             customSources={prefs.customSources}
             einkMode={Boolean(prefs.einkMode)}

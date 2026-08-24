@@ -147,10 +147,15 @@ function parseUrlConfig(): Partial<LogConfig> | null {
   }
 }
 
+function canUseLocalStorage(): boolean {
+  return typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function'
+}
+
 function loadInitialConfig(): LogConfig {
   const config = defaultConfig()
-  const stored =
-    typeof localStorage !== 'undefined' ? parseStoredConfig(localStorage.getItem(LOG_STORAGE_KEY)) : null
+  const stored = canUseLocalStorage()
+    ? parseStoredConfig(localStorage.getItem(LOG_STORAGE_KEY))
+    : null
   if (stored?.level) config.level = stored.level
   if (stored?.namespaces) config.namespaces = { ...config.namespaces, ...stored.namespaces }
   const fromUrl = parseUrlConfig()
@@ -162,7 +167,7 @@ function loadInitialConfig(): LogConfig {
 let activeConfig: LogConfig = loadInitialConfig()
 
 function persistConfig(config: LogConfig): void {
-  if (typeof localStorage === 'undefined') return
+  if (!canUseLocalStorage()) return
   try {
     localStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(config))
   } catch {
@@ -238,7 +243,7 @@ export const logController: LogController = {
   },
   reset() {
     activeConfig = defaultConfig()
-    if (typeof localStorage !== 'undefined') {
+    if (canUseLocalStorage()) {
       try {
         localStorage.removeItem(LOG_STORAGE_KEY)
       } catch {

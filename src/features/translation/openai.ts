@@ -1,5 +1,6 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core'
 
+import { assertHttpApiEndpoint } from '../../lib/apiEndpoint'
 import type { CloudTranslationConfig } from './types'
 
 function stripTrailingSlashes(value: string): string {
@@ -34,7 +35,7 @@ export function assertOpenAiEndpointAndKey(config: CloudTranslationConfig): stri
   } catch {
     throw new Error('API 地址格式不正确')
   }
-  if (parsed.protocol !== 'https:') throw new Error('为保护 API Key，API 地址必须使用 HTTPS')
+  assertHttpApiEndpoint(parsed)
   return base
 }
 

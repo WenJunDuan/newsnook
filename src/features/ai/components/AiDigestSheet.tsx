@@ -163,7 +163,7 @@ export function AiDigestSheet({
                   className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-cinnabar/50 bg-cinnabar/12 px-4 py-2 text-[12.5px] text-paper"
                 >
                   <Sparkles size={13} />
-                  去配置 AI 智读
+                  去配置 AI 助手
                 </button>
               )}
             </div>

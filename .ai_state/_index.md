@@ -4,18 +4,19 @@
 version: "9.9.6"
 
 # === PACE 路由状态 ===
-path: ""                          # Hotfix | Bugfix | Quick | Feature | Refactor | System
-stage: ""                         # brainstorm | roadmap | plan | design | impl | runtime-verify | review | polish | ship
+path: "Feature"                   # Hotfix | Bugfix | Quick | Feature | Refactor | System
+stage: "impl"                     # brainstorm | roadmap | plan | design | impl | runtime-verify | review | polish | ship
 breadcrumb: "on"                # v9.9.6 每轮 stage 面包屑注入; "off" 关闭 (fail-open)
-current_sprint_slug: ""           # 当前 sprint 目录名, 如 "2026-05-25-jwt-refresh"
+current_sprint_slug: "2026-08-24-reading-preference"  # 当前 sprint 目录名, 如 "2026-05-25-jwt-refresh"
 current_roadmap_slug: ""          # 仅 roadmap stage 期间填
 skip_polish: false                # 项目级 opt-out (默认 false)
 skip_architecture_check: false    # System/Refactor ship 前是否跳过 architecture 更新检查
 skip_runtime_verify: false        # v9.8.0: true 跳过运行时验证 (纯库/无运行环境才设; System/Refactor 不建议)
 
 # === 路由审议 (v9.9.6) ===
-route_confidence: 0               # 0-1, 主 agent 路由决策摘要中的置信度
-route_history: []                 # re-route 记录, 最多 10 条; 详情归 sprint/session-log
+route_confidence: 0.7             # 0-1, 主 agent 路由决策摘要中的置信度
+route_history:                    # re-route 记录, 最多 10 条; 详情归 sprint/session-log
+  - "2026-08-24 Feature/brainstorm reading-preference: 用户要求先落盘再确认设计; exploratory impl 不作契约 (c=0.7)"
 plan_model: ""                    # "" | "opus" — System/Refactor 的 plan/design 审议切 Opus 5
 
 # === 平台与版本 ===
@@ -52,32 +53,32 @@ tools_available:
 
 # === 进度计数 (index-updater hook 自动维护, 不手填) ===
 counts:
-  features_count: 0
+  features_count: 1
   issues_count: 0
   refactors_count: 0
   systems_count: 0
-  requirements_count: 0
+  requirements_count: 1
   reviews_count: 0
   cleanup_count: 0
   compound:
-    learning: 0
+    learning: 1
     trick: 0
-    decision: 1
-    explore: 0
+    decision: 2
+    explore: 1
 
 # === Pointers (指向最新相关文件) ===
 pointers:
-  latest_design: ""               # sprints/{current_sprint_slug}/design.md
+  latest_design: "sprints/2026-08-24-reading-preference/design.md"
   latest_review: ""
   latest_cleanup: ""
-  latest_brainstorm: ""
-  latest_decisions: ["compound/2026-08-24-decision-three-branch-workflow.md"]
-  latest_lessons: []
+  latest_brainstorm: "sprints/2026-08-24-reading-preference/brainstorm.md"
+  latest_decisions: ["compound/2026-08-24-decision-api-cleartext-http.md", "compound/2026-08-24-decision-three-branch-workflow.md"]
+  latest_lessons: ["compound/2026-08-24-learning-confirm-design-before-impl.md"]
   latest_architecture_update: ""  # ARCHITECTURE.md 最近更新时间 (UTC ISO-8601, 非文件指针)
-  latest_requirement: ""          # requirements/{slug}.md 最新 (v9.8.0)
+  latest_requirement: "requirements/reading-preference.md"
 
 # === PACE 联动字段 (v9.8.0 新, hook 自动维护) ===
-next_action: ""                   # hotfix2: 仅机器枚举 re-route|runtime-verify|review|polish|ship|rework_impl|next_roadmap_item:{slug}|roadmap_complete; 正常进度留空, 禁散文
+next_action: "re-route"
 last_subagent: ""                 # SubagentStop hook 仅记录生命周期
 last_subagent_at: ""
 active_worktrees: []              # 主 agent 现场核对 git worktree list 后维护; hook 不替代原生创建
@@ -108,6 +109,10 @@ fingerprint: ""
 
 - 2026-08-24: athena-init 完成, 探测 cc=2.1.231 / cx=0.149.1 / ag=未安装; .ai_state/ 骨架建立, 等待首个任务路由.
 - 2026-08-24: 分支拓扑收敛为 main(上游同步)/dev(个人开发)/release(发布), 已推送 origin 并清理 4 条冗余分支; 决策记录见 [[three-branch-workflow]] (`compound/2026-08-24-decision-three-branch-workflow.md`).
+- 2026-08-24: API 地址允许 HTTP, 决策见 [[api-cleartext-http]].
+- 2026-08-24: Feature `2026-08-24-reading-preference` 处于 brainstorm; 需求已落盘, 设计未确认, 停止改产品代码.
+- 2026-08-24: 阅读偏好分类归因已确认（源主题分类）；X For You 借鉴结论见 [[x-for-you-borrow]]；待确认精选双路召回。
+- 2026-08-24: reading-preference 进入 impl：双路精选 + 主题分类归因已写入代码，单测绿。
 
 ## 工具调度建议
 

@@ -4,31 +4,16 @@ import { PICKS_SYSTEM_PROMPT, picksUserPrompt } from './prompts'
 import { articleBrief } from './text'
 import type { AiConfig, AiPick, InterestSnapshot } from './types'
 
-/** 候选送入模型的上限：未读优先，超出部分截断 */
-const MAX_CANDIDATES = 60
+export {
+  buildPickCandidates,
+  mixPickCandidates,
+  MAX_CANDIDATES,
+  IN_NETWORK_RATIO,
+  type MixPickCandidatesInput,
+  type PickCandidatesInput,
+} from './pickCandidates'
+
 const MAX_PICKS = 8
-
-export interface PickCandidatesInput {
-  articles: Article[]
-  readIds: Set<string>
-  excludeIds?: Set<string>
-}
-
-/** 未读在前、时间新在前的候选序列；换一批时排除上一轮结果 */
-export function buildPickCandidates(input: PickCandidatesInput): Article[] {
-  const { articles, readIds, excludeIds } = input
-  const seen = new Set<string>()
-  const unread: Article[] = []
-  const read: Article[] = []
-  for (const article of articles) {
-    if (seen.has(article.id) || excludeIds?.has(article.id)) continue
-    seen.add(article.id)
-    if (readIds.has(article.id)) read.push(article)
-    else unread.push(article)
-  }
-  const byTime = (a: Article, b: Article) => b.publishedAt - a.publishedAt
-  return [...unread.sort(byTime), ...read.sort(byTime)].slice(0, MAX_CANDIDATES)
-}
 
 export function parsePicksPayload(raw: unknown, candidates: Article[]): AiPick[] {
   if (!Array.isArray(raw)) return []
@@ -50,7 +35,7 @@ export function parsePicksPayload(raw: unknown, candidates: Article[]): AiPick[]
   return picks
 }
 
-/** AI 精选：从当前列表中按本地阅读画像挑选，返回文章与理由 */
+/** AI 精选：对召回后的候选做 Chat Completions，返回文章与理由 */
 export async function pickArticles(
   config: AiConfig,
   snapshot: InterestSnapshot,

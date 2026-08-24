@@ -1,5 +1,6 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core'
 
+import { assertHttpApiEndpoint } from '../../lib/apiEndpoint'
 import { mapConcurrent as sharedMapConcurrent } from '../../lib/asyncPool'
 import {
   BergamotTranslation,
@@ -139,7 +140,7 @@ function assertCloudConfig(
   } catch {
     throw new Error('API 地址格式不正确')
   }
-  if (parsed.protocol !== 'https:') throw new Error('为保护 API Key，API 地址必须使用 HTTPS')
+  assertHttpApiEndpoint(parsed)
 }
 
 function decodeHtmlEntities(value: string): string {

@@ -73,6 +73,7 @@
     "test:reader-font-pinch": "npx tsx scripts/reader-font-pinch.test.ts",
     "test:webview-css-compat": "npx tsx scripts/webview-css-compat.test.ts",
     "test:ai": "npx tsx scripts/ai-feature.test.ts",
+    "test:reading-prefs": "npx tsx scripts/reading-prefs.test.ts",
     "bergamot:init": "node scripts/bergamot-init.mjs",
     "preview": "vite preview",
     "assets": "node scripts/generate-android-assets.mjs",

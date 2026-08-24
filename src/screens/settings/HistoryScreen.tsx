@@ -40,7 +40,10 @@ export function HistoryScreen({ history, onOpen, onBack }: Props) {
                 className="page-x w-full py-3.5 text-left"
               >
                 <span className="font-mono text-[10px] tracking-[0.12em] text-paper-faint">
-                  <span className="font-medium text-paper-muted">{article.sourceLabel}</span> · {articleRelativeTime(article)} · 正文已离线
+                  <span className="font-medium text-paper-muted">{article.sourceLabel}</span>
+                  {article.openedCategoryLabel ? ` · ${article.openedCategoryLabel}` : ''}
+                  {' · '}
+                  {articleRelativeTime(article)} · 正文已离线
                 </span>
                 <span className="mt-1 block font-display font-normal text-[16px] leading-snug text-paper md:text-[17px]">
                   {article.title}

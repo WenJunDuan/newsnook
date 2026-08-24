@@ -1,8 +1,27 @@
+/**
+ * AI 智读领域类型。
+ *
+ * 分工：client/config/prompts/storage/text 接口；digest 解读；
+ * readingPrefs/readLog/interest/pickCandidates/recommend 偏好与精选；assistant/pool 助手。
+ */
+
 /** OpenAI 兼容接口配置；Key 仅保存在本机，与翻译云配置同规格 */
 export interface AiConfig {
   apiKey: string
   endpoint: string
   model: string
+}
+
+/** 主题分类（不含综合）或设置页种子项 */
+export interface InterestCategory {
+  id: string
+  label: string
+}
+
+/** 用户锁定的阅读侧重，0–100；未出现的键仍跟每日统计走 */
+export interface ReadingPrefOverrides {
+  categories: Record<string, number>
+  publishers: Record<string, number>
 }
 
 export interface AiPrefs {
@@ -11,6 +30,8 @@ export interface AiPrefs {
   recommendEnabled: boolean
   /** 阅读器「AI 解读」入口 */
   digestEnabled: boolean
+  /** 阅读偏好手动侧重；空对象表示全部自动 */
+  readingPrefs: ReadingPrefOverrides
 }
 
 export type AiSentiment = 'positive' | 'neutral' | 'negative' | 'mixed'
@@ -33,11 +54,51 @@ export interface AiPick {
   reason: string
 }
 
+/** 设置页一条可调侧重 */
+export interface PrefBar {
+  id: string
+  label: string
+  /** 近窗统计占比 0–100 */
+  auto: number
+  /** 精选实际使用的 0–100（锁定则用手动值） */
+  weight: number
+  locked: boolean
+  count: number
+  /** 由阅读日志标出的偏好项 */
+  preferred: boolean
+}
+
+export interface ReadingProfile {
+  todayCount: number
+  windowCount: number
+  categories: PrefBar[]
+  publishers: PrefBar[]
+  /** 根据日志生成的一句画像（含数字） */
+  portrait: string
+}
+
+export interface ReadLogEntry {
+  articleId: string
+  title: string
+  sourceId: string
+  sourceName: string
+  sourceLabel: string
+  sourceGroup: string
+  categoryId: string
+  categoryLabel: string
+  /** 信源所属主题分类（不含综合）；缺省时回退 categoryId */
+  interestCategories?: InterestCategory[]
+  openedAt: number
+}
+
 /** 本地阅读偏好画像：只做统计快照，不出本机 */
 export interface InterestSnapshot {
   recentReadTitles: string[]
   laterTitles: string[]
   topSources: string[]
+  categoryPrefs: { label: string; weight: number }[]
+  publisherPrefs: { label: string; weight: number }[]
+  portrait: string
 }
 
 export interface ChatArticleRef {
