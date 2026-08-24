@@ -81,6 +81,7 @@ import {
   batchImportSourcesAndCategories,
   deleteCustomCategory,
   deleteCustomSource,
+  deleteCustomSources,
   resetCategoryLayout,
   resetCategorySources,
   resetTypography,
@@ -823,6 +824,9 @@ export default function App() {
           }
           onDeleteCustomSource={(sourceId) =>
             update((prev) => deleteCustomSource(prev, sourceId))
+          }
+          onDeleteCustomSources={(sourceIds) =>
+            update((prev) => deleteCustomSources(prev, sourceIds))
           }
           onBatchImport={(sources, categories) =>
             update((prev) => batchImportSourcesAndCategories(prev, sources, categories))
