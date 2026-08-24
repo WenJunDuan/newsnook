@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, Loader2, RotateCw, Search, X } from 'lucide-react'
+import { ChevronLeft, Loader2, RotateCw, Search, Sparkles, X } from 'lucide-react'
 
 import { ArticleRow, LeadStory } from '../components/ArticleItem'
 import { CategoryRail } from '../components/CategoryRail'
@@ -66,6 +66,8 @@ interface Props {
   translationPrefs?: TranslationPrefs
   /** 自定义源，用于刷新进度显示名称 */
   customSources?: NewsSource[]
+  /** 顶栏「AI 精选」入口；未开启该功能时不传 */
+  onOpenAiPicks?: () => void
   onRefresh: () => Promise<void>
   onLoadMore?: () => void
   onOpen: (article: Article) => void
@@ -199,6 +201,7 @@ export const FeedScreen = memo(function FeedScreen({
   presetSwitcher,
   translationPrefs,
   customSources,
+  onOpenAiPicks,
   onRefresh,
   onLoadMore,
   onOpen,
@@ -842,6 +845,18 @@ export const FeedScreen = memo(function FeedScreen({
                   siteCount={presetSwitcher.siteCount}
                 />
               </div>
+            )}
+
+            {onOpenAiPicks && (
+              <button
+                type="button"
+                onClick={onOpenAiPicks}
+                aria-label="AI 精选"
+                className="relative flex h-7.5 w-7.5 lg:h-8 lg:w-auto lg:px-2.5 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-transparent lg:border-haze/70 lg:bg-ink-raised/50 lg:hover:bg-ink-raised lg:hover:border-paper-faint/30 transition-all text-paper-muted hover:text-paper"
+              >
+                <Sparkles size={14} strokeWidth={1.6} className="text-cinnabar-soft" />
+                <span className="hidden lg:inline font-mono text-[11px] text-paper-muted">精选</span>
+              </button>
             )}
 
             <button
