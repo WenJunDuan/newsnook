@@ -26,6 +26,8 @@ import { BrowserFindBar } from './BrowserFindBar'
 import { BrowserImagesPanel } from './BrowserImagesPanel'
 import { useBrowserDialogFocus } from './useBrowserDialogFocus'
 import { BrowserIconButton, BrowserSheet } from './BrowserPrimitives'
+import { BrowserAgentPanel } from './agent/BrowserAgentPanel'
+import { Sparkles } from 'lucide-react'
 import { BrowserStartPage } from './BrowserStartPage'
 import { BrowserSearchPanel } from './BrowserSearchPanel'
 import { BrowserPlacesPanel } from './BrowserPlacesPanel'
@@ -54,6 +56,7 @@ export function BrowserWorkspace({
   const viewport = useRef<HTMLDivElement>(null)
   const [panel, setPanel] = useState<Panel>(null)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [agentOpen, setAgentOpen] = useState(false)
   const [placeAction, setPlaceAction] = useState<PlaceAction | null>(null)
   const [shortcutDraft, setShortcutDraft] = useState<ShortcutDraft | null>(null)
   const [draftError, setDraftError] = useState('')
@@ -349,6 +352,7 @@ export function BrowserWorkspace({
     {label:'浏览历史', icon:Clock3, action:() => openPanel('history')},
     {label:'下载管理', icon:Download, action:() => runCommand('downloads')},
     {label:'媒体资源', icon:Film, action:() => {openPanel('media'); if (active) void session.command('scanMedia')}, disabled:!active, badge:resources.length ? String(resources.length) : undefined},
+    {label:'AI 浏览助手', icon:Sparkles, action:()=>{setPanel(null);setAgentOpen(true)}},
     {label:'用户脚本', icon:ShieldCheck, action:() => openPanel('scripts'), badge:active ? String(session.state.activeScriptCount ?? 0) : undefined},
     {label:'脚本菜单', icon:Settings2, action:() => runCommand('scriptMenu'), disabled:!active},
     {label:'新建标签', icon:Plus, action:() => runCommand('new'), disabled:session.tabs.length >= 6},
@@ -381,6 +385,7 @@ export function BrowserWorkspace({
       <BrowserIconButton label="标签页" disabled={session.pending} onClick={() => openPanel('tabs')}>
         <span className="flex size-[18px] items-center justify-center rounded-[4px] border-[1.5px] border-current text-[10.5px] font-bold leading-none tabular-nums select-none">{session.tabs.length || 1}</span>
       </BrowserIconButton>
+      <BrowserIconButton label="AI 浏览助手" onClick={() => {setPanel(null);setAgentOpen(value=>!value)}} pressed={agentOpen}><Sparkles size={19}/></BrowserIconButton>
       <BrowserIconButton label="网页工具" onClick={() => openPanel(panel === 'menu' ? null : 'menu')}><MoreHorizontal size={20} strokeWidth={1.8}/></BrowserIconButton>
     </div>
     {session.state.loading && <div role="progressbar" aria-label="网页加载进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={session.state.progress ?? 0}
@@ -424,6 +429,7 @@ export function BrowserWorkspace({
         </div>
       </div>}
     </div>
+    {agentOpen && <BrowserAgentPanel tabId={session.state.tabId} loading={session.state.loading} onNavigate={session.open} onBack={()=>session.command('back')} onClose={()=>setAgentOpen(false)}/>}
     {bottomAddress && toolbar}
 
     {searchOpen && <BrowserSearchPanel privateMode={privateMode} current={active ? current : ''} initialValue={active ? current : ''} engine={search} history={history}

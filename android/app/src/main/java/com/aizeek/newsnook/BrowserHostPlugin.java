@@ -749,6 +749,88 @@ public class BrowserHostPlugin extends Plugin {
         onUi(call, () -> { closeNative(); call.resolve(); });
     }
 
+    /** Agent actions apply only to the existing live browser WebView. No website Java bridge. */
+    @PluginMethod public void agentAction(PluginCall call) {
+        String action = call.getString("action", "");
+        int requestedTab = call.getInt("tabId", -1);
+        int id = call.getInt("id", -1);
+        String content = call.getString("text", "");
+        String direction = call.getString("direction", "down");
+        onUi(call, () -> {
+            final Tab tab = current;
+            if (tab == null || tab.webView == null || !isLive(tab, tab.webView)
+                    || requestedTab != tab.id || !isHttpUrl(tab.url) || tab.loading || tab.preparing) {
+                call.reject("当前标签页不可操作，请等待加载并重新观察"); return;
+            }
+            if ("screenshot".equals(action)) {
+                WebView view = tab.webView;
+                try {
+                    int width = view.getWidth(), height = view.getHeight();
+                    if (width <= 0 || height <= 0) {call.reject("网页尚未显示"); return;}
+                    float scale = Math.min(1f, 900f / Math.max(width, height));
+                    int outputWidth = Math.max(1, Math.round(width * scale));
+                    int outputHeight = Math.max(1, Math.round(height * scale));
+                    Bitmap image = Bitmap.createBitmap(outputWidth, outputHeight, Bitmap.Config.RGB_565);
+                    android.graphics.Canvas canvas = new android.graphics.Canvas(image);
+                    canvas.scale(scale, scale);
+                    view.draw(canvas);
+                    java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                    image.compress(Bitmap.CompressFormat.JPEG, 65, out);
+                    image.recycle();
+                    call.resolve(new JSObject().put("result", new JSObject()
+                        .put("image", android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP))
+                        .put("width", outputWidth).put("height", outputHeight)
+                        .put("viewWidth", width).put("viewHeight", height)));
+                } catch (Exception error) {call.reject("网页截图失败");}
+                return;
+            }
+            if ("tap".equals(action)) {
+                int x = call.getInt("x", -1), y = call.getInt("y", -1);
+                WebView view = tab.webView;
+                if (x < 0 || y < 0 || x >= view.getWidth() || y >= view.getHeight()) {
+                    call.reject("点击位置超出网页范围"); return;
+                }
+                long now = android.os.SystemClock.uptimeMillis();
+                android.view.MotionEvent down = android.view.MotionEvent.obtain(now, now,
+                    android.view.MotionEvent.ACTION_DOWN, x, y, 0);
+                android.view.MotionEvent up = android.view.MotionEvent.obtain(now, now + 80,
+                    android.view.MotionEvent.ACTION_UP, x, y, 0);
+                try {
+                    view.dispatchTouchEvent(down);
+                    view.dispatchTouchEvent(up);
+                    call.resolve(new JSObject().put("result", new JSObject().put("ok", true)));
+                } finally {down.recycle(); up.recycle();}
+                return;
+            }
+            if (!java.util.Arrays.asList("observe", "click", "type", "submit", "scroll").contains(action)) {
+                call.reject("不支持的 Agent 操作"); return;
+            }
+            if (("click".equals(action) || "type".equals(action) || "submit".equals(action)) && (id < 0 || id >= 90)) {
+                call.reject("无效元素编号"); return;
+            }
+            if (content.length() > 4000) {call.reject("输入内容过长"); return;}
+            try {
+                java.io.InputStream input = getContext().getAssets().open("browser-agent.js");
+                byte[] bytes = new byte[input.available()];
+                int count = input.read(bytes); input.close();
+                if (count != bytes.length) {call.reject("Agent 脚本读取失败"); return;}
+                JSONObject args = new JSONObject();
+                args.put("action", action); args.put("id", id); args.put("text", content); args.put("direction", direction);
+                String script = new String(bytes, java.nio.charset.StandardCharsets.UTF_8).replace("__ARGS__", args.toString());
+                WebView target = tab.webView;
+                String pageUrl = tab.url;
+                target.evaluateJavascript(script, encoded -> {
+                    if (!isLive(tab, target) || current != tab || !pageUrl.equals(tab.url)) {call.reject("网页已切换"); return;}
+                    try {
+                        Object decoded = new org.json.JSONTokener(encoded).nextValue();
+                        JSONObject result = new JSONObject(String.valueOf(decoded));
+                        call.resolve(new JSObject().put("result", result));
+                    } catch (Exception error) {call.reject("网页观察或操作失败");}
+                });
+            } catch (Exception error) {call.reject("Agent 操作失败");}
+        });
+    }
+
     @PluginMethod public void navigate(PluginCall call) {
         String action = call.getString("action", "");
         String url = call.getString("url", "");
