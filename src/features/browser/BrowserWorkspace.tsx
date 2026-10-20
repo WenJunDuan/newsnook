@@ -5,6 +5,9 @@ import {
   MoreHorizontal, Pencil, Play, Plus, RefreshCw, Search, Settings2, ShieldCheck, Square, Trash2, X, Bot,
 } from 'lucide-react'
 import { Share } from '@capacitor/share'
+import {createBrowserConfigController} from './agent/browserConfig'
+import {downloadUserScriptSource} from './userScriptImport'
+import {loadUserScripts,saveUserScripts} from './scripts'
 import { useHardwareBackLayer } from '../../hooks/useHardwareBackLayer'
 import { suppressBrowserLogs } from '../../lib/logger'
 import { InkVideoPlayer } from '../../components/InkVideoPlayer'
@@ -60,6 +63,8 @@ export function BrowserWorkspace({
   const [agentBusy, setAgentBusy] = useState(false)
   const [agentOperating, setAgentOperating] = useState(false)
   const agentSheetRef = useRef<HTMLElement>(null)
+  const agentConfigRef = useRef<ReturnType<typeof createBrowserConfigController>|null>(null)
+  const configApprovalRef = useRef<(reason:string)=>Promise<boolean>>(async()=>false)
   const [placeAction, setPlaceAction] = useState<PlaceAction | null>(null)
   const [shortcutDraft, setShortcutDraft] = useState<ShortcutDraft | null>(null)
   const [draftError, setDraftError] = useState('')
@@ -68,6 +73,8 @@ export function BrowserWorkspace({
   const [findOpen, setFindOpen] = useState(false)
   const imageOverlayCloser = useRef<(() => boolean) | null>(null)
   const [preferences, setPreferences] = useState(loadBrowserPreferences)
+  const preferencesRef = useRef(preferences)
+  preferencesRef.current = preferences
   const privateMode = preferences.privateMode
   const privateModeRef = useRef(privateMode)
   const privacyLogRelease = useRef<(() => void) | null>(null)
@@ -109,6 +116,10 @@ export function BrowserWorkspace({
     const saved = readBrowserPreference(BROWSER_KEYS.search)
     return saved && Object.prototype.hasOwnProperty.call(BROWSER_ENGINES, saved) ? saved as BrowserSearchChoice : 'bing'
   })
+  const searchRef = useRef(search)
+  searchRef.current = search
+  const bottomAddressRef = useRef(bottomAddress)
+  bottomAddressRef.current = bottomAddress
   const historyRef = useRef(history)
   const exiting = useRef(false)
   const uiRevision = useRef(0)
@@ -135,6 +146,10 @@ export function BrowserWorkspace({
     agentOperating: agentOpen && agentOperating,
   })
   const current = session.state.url || ''
+  const currentUrlRef = useRef(current)
+  currentUrlRef.current = current
+  const capabilitiesRef = useRef(capabilities)
+  capabilitiesRef.current = capabilities
   const clearPageFind = session.clearFind
   useEffect(() => {setFindOpen(false); clearPageFind()}, [current, session.state.tabId, clearPageFind])
   const active = /^https?:\/\//i.test(current)
@@ -304,7 +319,7 @@ export function BrowserWorkspace({
   }
 
   const updatePreferences = async (next: BrowserPreferences): Promise<boolean> => {
-    const previous = preferences
+    const previous = preferencesRef.current
     // Stop recording before the asynchronous native acknowledgement; resume only after persistence.
     applyPrivacyGuard(previous.privateMode || next.privateMode)
     if (!(await session.updateSettings(next))) {
@@ -313,6 +328,7 @@ export function BrowserWorkspace({
     }
     try {
       const confirmed = saveBrowserPreferences(next)
+      preferencesRef.current = confirmed
       setPreferences(confirmed)
       applyPrivacyGuard(confirmed.privateMode)
       return true
@@ -331,7 +347,27 @@ export function BrowserWorkspace({
   const changePrivateMode = (enabled: boolean): Promise<boolean> | boolean =>
     session.pending ? false : updatePreferences({...preferences, privateMode: enabled})
   const saveSearchEngine = (value: BrowserSearchChoice): boolean =>
-    persist(BROWSER_KEYS.search, value, () => setSearch(value), true)
+    persist(BROWSER_KEYS.search, value, () => {searchRef.current=value;setSearch(value)}, true)
+  const saveAddressPosition = (value: 'top'|'bottom'): boolean =>
+    persist(BROWSER_KEYS.addressPosition,value,()=>{bottomAddressRef.current=value==='bottom';setBottomAddress(value==='bottom')},true)
+  if (!agentConfigRef.current) agentConfigRef.current = createBrowserConfigController({
+    getPreferences:()=>preferencesRef.current,
+    setPreferences:next=>updatePreferences(next),
+    getSearch:()=>searchRef.current,
+    setSearch:next=>saveSearchEngine(next as BrowserSearchChoice),
+    getAddressPosition:()=>bottomAddressRef.current?'bottom':'top',
+    setAddressPosition:saveAddressPosition,
+    getScripts:loadUserScripts,
+    saveScripts:next=>{saveUserScripts(next);window.dispatchEvent(new window.Event('newsnook:userscripts-changed'))},
+    syncScripts:()=>session.updateScripts(),
+    getHistoryCount:()=>historyRef.current.length,
+    clearHistory:()=>saveHistory([]),
+    clearSiteData:async url=>capabilitiesRef.current.clearSiteData?session.clearSiteData(url):false,
+    currentUrl:()=>currentUrlRef.current,
+    reload:()=>session.command('reload'),
+    approve:reason=>configApprovalRef.current(reason),
+    download:downloadUserScriptSource,
+  })
   const sharePage = async () => {
     if (!active) return
     try {
@@ -446,8 +482,9 @@ export function BrowserWorkspace({
       tabs={session.tabs} sheetRef={agentSheetRef} minimized={agentMinimized} onMinimize={()=>setAgentMinimized(true)}
       onNeedAttention={()=>{setPanel(null);setSearchOpen(false);setAgentMinimized(false)}} onBusyChange={setAgentBusy}
       onOperatingChange={setAgentOperating}
-      onSearch={query=>session.open(BROWSER_ENGINES[search].url+encodeURIComponent(query))}
-      searchUrl={query=>BROWSER_ENGINES[search].url+encodeURIComponent(query)}
+      onBrowserConfig={(request,signal,approve)=>{configApprovalRef.current=approve;return agentConfigRef.current!.execute(request,signal)}}
+      onSearch={query=>session.open(BROWSER_ENGINES[searchRef.current].url+encodeURIComponent(query))}
+      searchUrl={query=>BROWSER_ENGINES[searchRef.current].url+encodeURIComponent(query)}
       onNavigate={session.open} onBack={()=>session.command('back')} onForward={()=>session.command('forward')}
       onNewTab={async url => (await session.command('new')) && (await session.open(url))}
       onSwitchTab={index => {const tab=session.tabs.find(t=>t.index===index);return tab?session.activate(tab):Promise.resolve(false)}}
@@ -493,7 +530,7 @@ export function BrowserWorkspace({
     {panel === 'settings' && <BrowserFullPage title="浏览器设置"><BrowserSettingsPanel search={search} bottomAddress={bottomAddress} desktop={session.state.desktop}
       hasPage={active} pending={session.pending} historyCount={history.length} onBack={() => setPanel(null)}
       onSearchChange={saveSearchEngine}
-      onAddressPositionChange={value => {persist(BROWSER_KEYS.addressPosition, value ? 'bottom' : 'top', () => setBottomAddress(value), true)}}
+      onAddressPositionChange={value => {saveAddressPosition(value?'bottom':'top')}}
       onDesktopChange={toggleDesktop} onClearHistory={() => confirmClear('history')}
       preferences={preferences} onPreferencesChange={updatePreferences} privateMode={privateMode}
       onPrivateModeChange={changePrivateMode}

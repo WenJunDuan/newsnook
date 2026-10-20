@@ -17,6 +17,7 @@ export interface AgentBridge {
 }
 export interface BrowserAgentRuntimeOptions {
   signal:AbortSignal
+  onBrowserConfig?:(request:AgentToolArguments,signal:AbortSignal)=>Promise<unknown>
   onSearch:(query:string)=>Promise<boolean>
   onNavigate:(url:string)=>Promise<boolean>
   searchUrl:(query:string)=>string
@@ -38,7 +39,7 @@ export interface BrowserAgentRuntime extends ReActRuntime {
 }
 
 export const AGENT_TOOL_LABELS:Record<AgentToolName,string>={
-  browser_search:'搜索网页',browser_open_url:'打开网址',browser_observe:'读取网页',browser_click:'点击网页',
+  browser_config:'管理浏览器配置',browser_search:'搜索网页',browser_open_url:'打开网址',browser_observe:'读取网页',browser_click:'点击网页',
   browser_type:'填写内容',browser_choose:'选择选项',browser_submit:'提交表单',browser_scroll:'滚动网页',
   browser_back:'返回上一页',browser_forward:'前进',browser_tabs:'查看标签页',browser_new_tab:'新建标签页',
   browser_switch_tab:'切换标签页',browser_close_tab:'关闭标签页',browser_screenshot:'观察网页画面',
@@ -328,6 +329,16 @@ export function createBrowserAgentRuntime(options:BrowserAgentRuntimeOptions):Br
     if(expectedContextVersion!==undefined&&expectedContextVersion!==contextVersion)throw new Error('模型依据的网页或文件状态已变化，请根据新观察重新决定')
     let fingerprint=fingerprintFor(name,args)
     if(uncertain.has(fingerprint))throw new Error('上次操作已经发出但结果未确认，请观察或人工确认，不能重复执行')
+    if(name==='browser_config'){
+      if(!options.onBrowserConfig)throw new Error('浏览器配置管理尚未就绪')
+      const result=await options.onBrowserConfig(args,signal)
+      if(args.action==='apply'){
+        invalidate()
+        // A configuration write changes app state, not necessarily the current page.
+        // Do not attempt a DOM read here; script changes may reload the WebView.
+      }
+      return {result}
+    }
     if(name==='browser_observe')return {result:await observe()}
     if(name==='browser_tabs')return {result:await bridge.state()}
     if(name==='browser_request_handoff')return handoff(args.kind as AgentHandoff['kind'],text(args.reason))

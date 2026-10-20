@@ -201,3 +201,17 @@ Android WebView Provider 的实际跨 frame 消息、真实 MotionEvent 与网�
 - [Android 存储访问框架](https://developer.android.com/training/data-storage/shared/documents-files)
 
 以上是平台接口依据；本项目的实际行为以源码、回归用例和交付记录为准。
+
+## 9. Agent 浏览器配置工具（beta）
+
+新增一个 `browser_config` 模型工具，复用浏览器的设置状态、UserScript 校验和 WebView 同步通道。它不从网页 DOM 中模拟点击设置，而是调用与人工操作一致的持久化与原生接口；即使尚未打开任何网页，也能读取和修改浏览器偏好。
+
+- `action: "inspect"`：读取当前浏览器设置、搜索引擎、地址栏位置、历史条数和分页的用户脚本摘要。默认每页 12 项，最多 30 项，不向模型发送脚本源码。指定 `scriptId` 且经用户授权后，可分段读取源码（默认 16,000 字符，上限 24,000 字符），通过 `sourceNextOffset` 获取后续片段。
+- `action: "apply"`：一次调用批量修改 `settings`、`desktopMode`、`searchEngine`、`addressPosition` 和 `scripts`。脚本操作包括 `install`、`update`、`enable`、`disable`、`delete`；新增和更新脚本支持 HTTPS 地址或符合 UserScript 元信息规则的完整源码。单次最多 12 项脚本变更。
+- `clearData: "history" | "site"`：须单独请求、经用户授权，不与其他变更混用。清理站点数据时，目标来源在用户确认后仍须保持不变。
+
+高影响设置（脚本安装、启停、删除，隐私模式切换，开启第三方 Cookie、关闭外部应用确认等）在写入前汇总成 **一次可滚动的确认页面**，展示脚本匹配站点、`@grant`、`@connect` 和依赖。无效参数、找不到的脚本、过期的状态、用户拒绝、网络下载失败或脚本解析失败不会提前写入配置。
+
+配置批处理复用 `BrowserWorkspace` 已有的 `updatePreferences` / 搜索引擎及地址栏持久化 / `useBrowserSession.updateScripts` / `reload`。持久化和原生同步失败时尽力回滚，并明确报告恢复结果不确定的情况；不会因为工具被调用就宣布脚本已生效。网页存在时，在需要的变更之后只对本次批处理申请一次刷新；没有页面则在后续打开时载入。
+
+实现：`src/features/browser/agent/browserConfig.ts`（参数验证、配置事务、权限与精简结果），`src/features/browser/userScriptImport.ts`（人工和 Agent 共用的 HTTPS 脚本下载校验），`scripts/browser-agent-config.test.ts`（配置、权限、回滚、上下文体积和无网页执行测试）。`npm run test:browser-agent` 已包含该测试文件。

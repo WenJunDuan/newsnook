@@ -26,6 +26,7 @@ interface Props {
   onNeedAttention:()=>void
   onBusyChange:(busy:boolean)=>void
   onOperatingChange?:(operating:boolean)=>void
+  onBrowserConfig:(request:Record<string,unknown>,signal:AbortSignal,approve:(reason:string)=>Promise<boolean>)=>Promise<unknown>
   onSearch:(query:string)=>Promise<boolean>
   searchUrl:(query:string)=>string
   onNavigate:(url:string)=>Promise<boolean>
@@ -40,7 +41,7 @@ interface AgentTurn {id:string;goal:string;status:'completed'|'failed'|'stopped'
 type RunOutcome='running'|'completed'|'failed'|'stopped'
 
 const LABELS:Partial<Record<AgentToolName,string>>={
-  browser_search:'正在搜索网页',browser_open_url:'正在打开网址',browser_observe:'正在阅读网页',
+  browser_config:'正在管理浏览器配置',browser_search:'正在搜索网页',browser_open_url:'正在打开网址',browser_observe:'正在阅读网页',
   browser_click:'正在点击网页',browser_type:'正在输入文字',browser_choose:'正在选择选项',
   browser_submit:'正在提交表单',browser_scroll:'正在滚动阅读',browser_back:'正在返回',
   browser_forward:'正在前进',browser_tabs:'正在查看标签页',browser_new_tab:'正在打开新标签',
@@ -119,7 +120,7 @@ function ArtifactList({artifacts}:{artifacts:AgentArtifact[]}){
   </section>
 }
 
-export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNeedAttention,onBusyChange,onOperatingChange,onSearch,searchUrl,onNavigate,onClose}:Props){
+export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNeedAttention,onBusyChange,onOperatingChange,onBrowserConfig,onSearch,searchUrl,onNavigate,onClose}:Props){
   const [config,setConfig]=useState<AgentConfig>({endpoint:'https://api.openai.com/v1',apiKey:'',model:'gpt-4.1'})
   const [goal,setGoal]=useState('')
   const [busy,setBusy]=useState(false)
@@ -412,6 +413,7 @@ export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNe
       }
       runtime=createBrowserAgentRuntime({
         signal:abort.signal,onSearch,onNavigate,searchUrl,
+        onBrowserConfig:(request,signal)=>onBrowserConfig(request,signal,async reason=>requestApproval({id:'browser-config-'+Date.now(),reason,tool:'browser_config'},signal,abort)),
         onExposePage:()=>exposePage(abort),
         onApproval:(request,signal)=>requestApproval(request,signal,abort),
         onHandoff:(request,signal)=>requestHandoff(request,signal,abort),
@@ -615,9 +617,9 @@ export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNe
     </div>
     {(approval||closePrompt)&&<div className="absolute inset-0 z-30 flex items-end justify-center bg-ink/40 px-4 pb-[calc(var(--sab)+18px)]" role="presentation">
       <div ref={dialogRef} role="alertdialog" tabIndex={-1} aria-modal="true" aria-labelledby="agent-confirm-title" aria-describedby="agent-confirm-reason"
-        className="w-full max-w-md rounded-[19px] border border-haze bg-ink-raised p-5 shadow-lg">
+        className="max-h-[calc(100dvh-64px)] w-full max-w-md overflow-y-auto overscroll-contain rounded-[19px] border border-haze bg-ink-raised p-5 shadow-lg">
         <h3 id="agent-confirm-title" className="text-[16px] font-semibold">{approval?'确认网页操作':'停止当前任务？'}</h3>
-        <p id="agent-confirm-reason" className="mt-2 text-[13px] leading-[1.65] text-paper-muted">{approval?.reason||'关闭后任务将停止。收起面板可保留任务。'}</p>
+        <p id="agent-confirm-reason" className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-[1.65] text-paper-muted">{approval?.reason||'关闭后任务将停止。收起面板可保留任务。'}</p>
         {approval?.target&&<p className="mt-2 break-words text-[13px] leading-relaxed">{approval.target}</p>}
         {approval&&siteName(approval.url)&&<p className="mt-1 text-[12px] text-paper-muted">{siteName(approval.url)}</p>}
         {closePrompt&&error&&<p role="alert" className="mt-2 text-[13px] leading-relaxed text-cinnabar">{error}</p>}
