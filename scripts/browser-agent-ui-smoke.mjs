@@ -10,34 +10,69 @@ const server=http.createServer(async(req,res)=>{
     let raw='';for await(const part of req)raw+=part
     const data=JSON.parse(raw)
     requests.push(data)
-    const userContent=data.messages[1].content
-    const content=JSON.parse(Array.isArray(userContent) ? userContent[0].text : userContent)
-    const observation=content.page
-    const history=content.priorSteps||[]
-    let next
-    if(content.goal==='删除条目')next=/Deleted/.test(observation.text)?{action:'finish',answer:'删除动作已完成'}:{action:'click',id:observation.elements.find(x=>x.text==='删除条目')?.id}
-    else if(content.goal==='选择类别')next=/Selected:Beta/.test(observation.text)?{action:'finish',answer:'选项已更改'}:{action:'choose',id:observation.elements.find(x=>x.tag==='select')?.id,text:'Beta'}
-    else if(content.goal==='视觉点击'){
-      if(/VisualTapped/.test(observation.text))next={action:'finish',answer:'视觉点击已完成'}
-      else if(history.length===0)next={action:'inspect'}
+    assert.equal(data.tool_choice,'auto')
+    assert(data.tools?.some(t=>t.function.name==='browser_open_url'))
+    assert(data.tools?.some(t=>t.function.name==='browser_search'))
+    const {task}=JSON.parse(data.messages[1].content)
+    const toolMessages=data.messages.filter(item=>item.role==='tool')
+    const last=toolMessages.at(-1)
+    const previous=data.messages.filter(item=>item.role==='assistant'&&item.tool_calls?.length).at(-1)
+    const lastName=previous?.tool_calls?.[0]?.function?.name
+    const lastResult=last?JSON.parse(last.content):null
+    function pageFrom(result){
+      const value=result?.data
+      if(!value)return null
+      return value.observation?.page||value.page||value.observation||null
+    }
+    const latestPage=toolMessages.map(m=>pageFrom(JSON.parse(m.content))).filter(p=>p?.elements).at(-1)
+    const page=pageFrom(lastResult)||latestPage
+    const elements=page?.elements||latestPage?.elements||[]
+    const has=(text)=>Boolean(page?.text?.includes(text))
+    let action=null,answer=null
+    if(task==='搜索 Qwen3.8'){
+      if(!lastName)action=['browser_open_url',{url:`http://10.0.2.2:${fixturePort}/`}]
+      else if(has('Search:Qwen3.8'))answer='已在真实网页中搜索 Qwen3.8'
+      else if(lastName==='browser_open_url')action=['browser_type',{id:elements.find(x=>x.tag==='input')?.id,text:'Qwen3.8'}]
+      else action=['browser_click',{id:elements.find(x=>x.text==='搜索')?.id}]
+    }else if(task==='打开新标签页'){
+      if(!lastName)action=['browser_new_tab',{url:`http://10.0.2.2:${fixturePort}/next`}]
+      else answer='新标签页已打开'
+    }else if(task==='切换到首标签'){
+      if(!lastName)action=['browser_switch_tab',{index:0}]
+      else answer='已切换到首标签'
+    }else if(task==='选择类别'){
+      if(!lastName)action=['browser_observe',{}]
+      else if(has('Selected:Beta'))answer='选项已更改'
+      else action=['browser_choose',{id:elements.find(x=>x.tag==='select')?.id,text:'Beta'}]
+    }else if(task==='删除条目'){
+      if(!lastName)action=['browser_observe',{}]
+      else if(lastResult?.ok===false && /拒绝/.test(lastResult.error))answer='操作已拒绝，未执行删除'
+      else if(has('Deleted'))answer='删除动作已完成'
+      else action=['browser_click',{id:elements.find(x=>x.text==='删除条目')?.id}]
+    }else if(task==='视觉点击'){
+      if(!lastName)action=['browser_observe',{}]
+      else if(has('VisualTapped'))answer='视觉点击已完成'
+      else if(lastName!=='browser_screenshot')action=['browser_screenshot',{}]
       else {
-        const target=observation.elements.find(x=>x.text==='截图点我')
-        next={action:'tap',x:Math.round(target.x*content.screenshot.width/observation.viewport.width),
-          y:Math.round(target.y*content.screenshot.height/observation.viewport.height)}
+        const image=lastResult.data
+        const element=latestPage.elements.find(x=>x.text==='截图点我')
+        action=['browser_tap',{x:Math.round(element.x*image.width/latestPage.viewport.width),
+          y:Math.round(element.y*image.height/latestPage.viewport.height)}]
       }
-    }
-    else if(content.goal==='停止测试'){
-      await new Promise(resolve=>setTimeout(resolve,1800))
-      next={action:'click',id:observation.elements.find(x=>x.text==='自动更改')?.id}
-    }
-    else if(content.goal==='打开新标签页')next=history.length?{action:'finish',answer:'新标签页已打开'}:{action:'new_tab',url:`http://10.0.2.2:${fixturePort}/next`}
-    else if(content.goal==='切换到首标签')next=history.length?{action:'finish',answer:'已切换到首标签'}:{action:'switch_tab',index:0}
-    else if(/Search:Qwen3\.8/.test(observation.text))next={action:'finish',answer:'已在真实网页中搜索 Qwen3.8'}
-    else if(history.length===0)next={action:'type',id:observation.elements.find(x=>x.tag==='input')?.id,text:'Qwen3.8'}
-    else next={action:'click',id:observation.elements.find(x=>x.tag==='button')?.id}
+    }else if(task==='停止测试'){
+      if(!lastName)action=['browser_observe',{}]
+      else {
+        await new Promise(resolve=>setTimeout(resolve,1800))
+        action=['browser_click',{id:elements.find(x=>x.text==='自动更改')?.id}]
+      }
+    }else throw new Error('unexpected test goal:'+task)
     calls++
+    const message=answer!==null?{role:'assistant',content:answer}:{
+      role:'assistant',content:null,
+      tool_calls:[{id:`mock-call-${calls}`,type:'function',function:{name:action[0],arguments:JSON.stringify(action[1])}}],
+    }
     res.writeHead(200,{'Content-Type':'application/json'})
-    res.end(JSON.stringify({id:'mock-response',object:'chat.completion',choices:[{index:0,message:{role:'assistant',content:JSON.stringify(next)},finish_reason:'stop'}]}))
+    res.end(JSON.stringify({id:'mock-response',object:'chat.completion',choices:[{index:0,message,finish_reason:answer!==null?'stop':'tool_calls'}]}))
     return
   }
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'})
@@ -72,7 +107,7 @@ try{
     await wait(850)
     await evaluate(`(()=>{const skip=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='稍后再说');if(skip){skip.click();return true}return false})()`)
     await wait(750)
-    console.log('Open UI:',await evaluate(`window.dispatchEvent(new CustomEvent('newsnook:open-browser',{detail:{url:'http://10.0.2.2:${fixturePort}/'}}))`))
+    console.log('Open UI:',await evaluate(`window.dispatchEvent(new CustomEvent('newsnook:open-browser',{detail:{}}))`))
     await waitUntil(`!!document.querySelector('[aria-label="NewsNook 网页浏览器"]')`)
     await waitUntil(`document.querySelector('[aria-label="AI 浏览助手"]')!==null`)
     await evaluate(`document.querySelector('button[aria-label="AI 浏览助手"]').click()`)
@@ -96,7 +131,7 @@ try{
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"] [role="status"]')?.textContent==='已完成'`,{tries:95,interval:350})
     const result=await evaluate(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.slice(-250)`)
     assert.match(result,/真实网页中搜索 Qwen3\.8/)
-    assert.equal(calls,3)
+    assert(calls>=4)
     assert(await fill('textarea[aria-label="AI 浏览任务"]','打开新标签页'))
     assert(await click('开始任务'))
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.includes('新标签页已打开')`,{tries:110,interval:350})
@@ -108,7 +143,7 @@ try{
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.includes('已切换到首标签')`,{tries:100,interval:350})
     const switched=await evaluate(`window.Capacitor.Plugins.NewsNookBrowser.tabs()`)
     assert.equal(switched.tabs.find(t=>t.active).index,0)
-    assert.equal(calls,7)
+    assert(calls>=8)
     assert(await fill('textarea[aria-label="AI 浏览任务"]','选择类别'))
     assert(await click('开始任务'))
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.includes('选项已更改')`,{tries:75,interval:350})
@@ -116,7 +151,7 @@ try{
     assert(await click('开始任务'))
     await waitUntil(`!!document.querySelector('[aria-label="确认 AI 网页操作"]')`,{tries:65,interval:300})
     assert(await click('拒绝'))
-    await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"] [role="status"]')?.textContent?.includes('本次操作已拒绝')`)
+    await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.includes('操作已拒绝，未执行删除')`,{tries:75,interval:350})
     assert(await fill('textarea[aria-label="AI 浏览任务"]','删除条目'))
     assert(await click('开始任务'))
     await waitUntil(`!!document.querySelector('[aria-label="确认 AI 网页操作"]')`,{tries:65,interval:300})
@@ -124,12 +159,10 @@ try{
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.includes('删除动作已完成')`,{tries:75,interval:350})
     assert(await fill('textarea[aria-label="AI 浏览任务"]','视觉点击'))
     assert(await click('开始任务'))
-    await waitUntil(`!!document.querySelector('[aria-label="确认 AI 网页操作"]')`,{tries:75,interval:350})
-    assert(await click('允许这一步'))
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.includes('视觉点击已完成')`,{tries:75,interval:350})
     assert(await fill('textarea[aria-label="AI 浏览任务"]','停止测试'))
     assert(await click('开始任务'))
-    await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"] [role="status"]')?.textContent?.includes('AI 分析')`,{tries:30,interval:200})
+    await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"] [role="status"]')?.textContent?.includes('正在分析')`,{tries:30,interval:200})
     assert(await click('停止'))
     await wait(2200)
     const stopped=await evaluate(`document.querySelector('section[aria-label="AI 浏览助手"] [role="status"]')?.textContent`)

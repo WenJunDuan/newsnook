@@ -1,30 +1,30 @@
-# NewsNook Browser Agent
+# NewsNook AI Browser Agent (ReAct)
 
-Android-only AI automation for the **existing** NewsNook browser WebView. It does not access or control other Android apps, Accessibility Services, ADB, or a second browser engine.
+Only controls the **existing NewsNook Android browser WebView**. It does not require Accessibility Services, system permissions, ADB, another browser kernel, or a backend account.
 
-## Setup
+## How to use
 
-1. Open NewsNook's built-in browser and load a web page.
-2. Tap **AI 浏览助手** in the browser toolbar (also available under **网页工具**).
-3. Open **API 设置** and provide **Base URL**, **Model**, and **API Key**. The endpoint must implement OpenAI-compatible `POST /chat/completions`, including a text `choices[0].message.content` response containing a JSON action. For visual fallback, use a vision-capable model.
-4. Normally use HTTPS. Localhost HTTP is allowed. Private LAN HTTP (RFC1918 or `.local`/`.lan`) requires explicitly enabling **允许局域网 HTTP**. Its API key is transmitted unencrypted over that connection. Public HTTP endpoints are rejected.
-5. Enter a task and select **开始任务**. **停止** aborts further actions. Consequential interactions (publication, deletion, payment, sending content, unlabeled buttons, unknown visual clicks) pause for explicit confirmation.
+1. Open **NewsNook browser**. You **do not need to open a page first**.
+2. Tap **AI 浏览助手** in the toolbar. In **API 设置**, enter the **Base URL**, **Model**, and **API Key** (OpenAI-compatible Chat Completions **function/tool calling** is required; a vision-capable model enables screenshot mode). Save the settings.
+3. Give a **single natural-language instruction** (e.g., “去 Linux.do 找到讨论 Qwen 量化的帖子，阅读并总结推荐选择”) and select **开始任务**.
+4. The model decides how to proceed: search with the user's selected search engine, navigate to a known URL, observe the current page, enter text, click, scroll, switch tabs, request a screenshot, or finish. Each tool's *actual browser result* is returned to the model for its next decision. **No fixed action plan, no pre-selected step order, and no current-page prerequisite.**
+5. **停止** prevents further actions; potentially consequential browser interactions pause for one-time approval.
 
-API key persistence uses the existing Android SecureStore / Keystore. Base URL, model, and LAN opt-in are saved separately. This browser feature has no NewsNook AI relay server. Current page text, permitted page element metadata, and screenshots (if requested) are supplied to the user-configured model endpoint.
+Only the API key is saved to the existing Android SecureStore / Keystore. Model, endpoint and LAN opt-in are stored separately. HTTPS is default; opt-in private LAN HTTP is available for local models and sends the API key in plaintext on that LAN. No NewsNook AI relay server is used. Page text and screenshots requested by the model are sent to the configured API endpoint.
 
-## Architecture
+## ReAct implementation
 
-- `BrowserHostPlugin.agentAction`: tab-scoped and navigation-aware native controller, screenshot + actual WebView touch, no bridge exposed to remote websites.
-- `android/app/src/main/assets/browser-agent.js`: DOM observation, visible-text extraction, stable observation snapshots, input/click/dropdown/submit/scroll.
-- `browserAgent.ts`: endpoint policy, BYOK settings, model step parser, API calls and confirmation policy.
-- `BrowserAgentPanel.tsx`: observable step loop, 35-step bound, stop/cancel, confirmation, task results.
+- `browserAgent.ts`: model-native OpenAI-compatible `tools`/`tool_calls` with `tool_choice:auto`, dynamic tool selection and feedback, paired assistant/tool messages, model final text response, context bounds, circuit breaker (64 tool calls), cancellation. No single-step JSON action parser in the execution loop.
+- `BrowserAgentPanel.tsx`: user goal, secure settings, browser-side tool executor using current browser session, automatic post-action observations, app-theme UI, progress, stop, and sensitive-action confirmation. Starts on a blank browser page.
+- `BrowserHostPlugin.agentAction` / `browser-agent.js`: screenshot, physical WebView taps, DOM observation with snapshot epoch IDs, text, input, click, select, submit, long-page scroll.
+- Available model tools: `browser_search`, `browser_open_url`, `browser_observe`, `browser_click`, `browser_type`, `browser_choose`, `browser_submit`, `browser_scroll`, `browser_back`, `browser_forward`, `browser_tabs`, `browser_new_tab`, `browser_switch_tab`, `browser_close_tab`, `browser_screenshot`, `browser_tap`.
 
 ## Verification
 
-- `npm run test:browser-agent` — DOM snapshot expiration, policy and parser.
-- `npm run test:browser` — full existing browser regression plus Agent tests.
-- `npm run build`, `npx cap sync android`, `cd android && ./gradlew :app:assembleLocalDebug` — production assets and native debug APK.
-- `scripts/browser-agent-device-smoke.mjs` — requires an isolated emulator with the debug APK installed and ADB DevTools forwarded to port 9231; verifies real WebView observe/input/click/navigation/screenshot/tap/scroll.
-- `scripts/browser-agent-ui-smoke.mjs` — same emulator, test-only local HTTP fixture on port 8765 plus ADB reverse; checks BYOK, Keystore, simulated Chat Completions, autonomous tools, confirmation/denial and task abort. Tests never require a real API key and clean up test credentials.
+- `npm run test:browser-agent` — DOM snapshot integrity, endpoint and approval policies, ReAct schema, action selection, result feedback, error recovery, cancellation.
+- `npm run test:browser` — full existing browser regression suite plus Agent tests.
+- `npm run build`, `npx cap sync android`, `cd android && ./gradlew :app:assembleLocalDebug` — Android debug APK.
+- `scripts/browser-agent-device-smoke.mjs` — isolated emulator with ADB DevTools forwarded to TCP 9231; native WebView operations.
+- `scripts/browser-agent-ui-smoke.mjs` — same emulator, test-only fixture port 8765 with ADB reverse; verifies **from a blank browser** BYOK, Keystore, model-native tool calls, tool observation loop, typing/clicking, tabs, dropdowns, screenshot and touch, approvals and cancellation. It does not need a real provider API key and erases test credentials afterward.
 
-**Test scope:** The E2E fixture verifies the complete client/model/browser control chain. A real third-party model endpoint has not been tested without a user-provided API key. Site-specific login, CAPTCHA, and complex cross-origin iframe behavior remain dependent on the website's WebView compatibility.
+**Compatibility:** Third-party Chat Completions providers must support the OpenAI `tools`/`tool_calls` protocol. Models that only emit JSON text are insufficient for this ReAct flow. Real external-model compatibility depends on the chosen provider. Automated E2E tests use a local simulated model with actual Android WebView and the real native bridge.
