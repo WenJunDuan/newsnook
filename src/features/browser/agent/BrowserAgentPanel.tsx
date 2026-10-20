@@ -1,4 +1,10 @@
-import {useEffect,useRef,useState} from 'react'
+import {useEffect,useRef,useState,type RefObject,type KeyboardEvent} from 'react'
+import {
+  AlertCircle, ArrowUp, Bot, Check, CheckCheck, ChevronDown, CircleCheck, Copy,
+  Eye, EyeOff, LoaderCircle, Maximize2, Minimize2, Settings2, Square, X,
+} from 'lucide-react'
+import {AgentMarkdown} from './AgentMarkdown'
+import {useAgentSheet} from './agentSheet'
 import {
   agentApprovalReason,browserAgentAction,browserAgentState,loadAgentConfig,runReActAgent,saveAgentConfig,
   type AgentConfig,type AgentObservation,type AgentScreenshot,type AgentTab,type AgentToolArguments,type AgentToolName,
@@ -10,6 +16,11 @@ interface Props {
   loading?:boolean
   progress?:number
   tabs:AgentTab[]
+  sheetRef:RefObject<HTMLElement|null>
+  minimized:boolean
+  onMinimize:()=>void
+  onNeedAttention:()=>void
+  onBusyChange:(busy:boolean)=>void
   onSearch:(query:string)=>Promise<boolean>
   onNavigate:(url:string)=>Promise<boolean>
   onBack:()=>Promise<boolean>
@@ -46,20 +57,28 @@ function textArg(value:unknown):string {
   return value.trim()
 }
 
-export function BrowserAgentPanel({tabId,tabs,onSearch,onNavigate,onBack,onForward,onNewTab,onSwitchTab,onCloseTab,onClose}:Props){
+export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNeedAttention,onBusyChange,onSearch,onNavigate,onBack,onForward,onNewTab,onSwitchTab,onCloseTab,onClose}:Props){
   const [config,setConfig]=useState<AgentConfig>({endpoint:'https://api.openai.com/v1',apiKey:'',model:'gpt-4.1'})
   const [goal,setGoal]=useState('')
   const [busy,setBusy]=useState(false)
   const [editing,setEditing]=useState(false)
   const [configReady,setConfigReady]=useState(false)
   const [status,setStatus]=useState('')
-  const [answer,setAnswer]=useState('')
+  const [turns,setTurns]=useState<{goal:string;answer:string}[]>([])
+  const [activeGoal,setActiveGoal]=useState('')
+  const [error,setError]=useState('')
+  const [saving,setSaving]=useState(false)
+  const [showKey,setShowKey]=useState(false)
+  const [copied,setCopied]=useState<number|null>(null)
+  const [closePrompt,setClosePrompt]=useState(false)
+  const scrollRef=useRef<HTMLDivElement>(null)
+  const lastTurnCount=useRef(0)
+  const lastActiveGoal=useRef('')
+  const {height,dragging,isFull,expand,onPointerDown,onPointerMove,onPointerEnd,snapTo,limits}=useAgentSheet(sheetRef)
   const [activity,setActivity]=useState<string[]>([])
   const [approval,setApproval]=useState<string|null>(null)
   const approvalResolve=useRef<((approved:boolean)=>void)|null>(null)
   const controller=useRef<AbortController|null>(null)
-  const latestTabs=useRef(tabs)
-  latestTabs.current=tabs
 
   useEffect(()=>{
     let mounted=true
@@ -69,12 +88,33 @@ export function BrowserAgentPanel({tabId,tabs,onSearch,onNavigate,onBack,onForwa
     return ()=>{mounted=false}
   },[])
   useEffect(()=>()=>{controller.current?.abort();approvalResolve.current?.(false)},[])
+  useEffect(()=>onBusyChange(busy),[busy,onBusyChange])
+  useEffect(()=>{
+    const transcript=scrollRef.current
+    const newTurn=turns.length>lastTurnCount.current
+    const newGoal=Boolean(activeGoal && lastActiveGoal.current!==activeGoal)
+    lastTurnCount.current=turns.length
+    lastActiveGoal.current=activeGoal
+    if(!transcript||minimized)return
+    if(newTurn){
+      // Start at the beginning of the latest Markdown answer, not its ending.
+      const entries=transcript.querySelectorAll<HTMLElement>('[data-agent-turn]')
+      const target=entries[entries.length-1]
+      if(target){
+        const offset=target.getBoundingClientRect().top-transcript.getBoundingClientRect().top+transcript.scrollTop
+        transcript.scrollTop=Math.max(0,offset-12)
+      }
+    }else if(newGoal||((busy||activeGoal)&&transcript.scrollHeight-transcript.scrollTop-transcript.clientHeight<145)){
+      transcript.scrollTop=transcript.scrollHeight
+    }
+  },[turns,activeGoal,activity,status,minimized,busy])
 
   const stop=()=>{
     controller.current?.abort()
     approvalResolve.current?.(false)
     controller.current=null
     setBusy(false)
+    setActiveGoal('')
     setStatus('已停止')
   }
   const pauseForConfirmation=(reason:string,signal:AbortSignal)=>new Promise<void>((resolve,reject)=>{
@@ -89,6 +129,7 @@ export function BrowserAgentPanel({tabId,tabs,onSearch,onNavigate,onBack,onForwa
     const onAbort=()=>done(false)
     approvalResolve.current=done
     signal.addEventListener('abort',onAbort,{once:true})
+    onNeedAttention()
     setApproval(reason)
   })
   const sleep=(time:number,signal:AbortSignal)=>new Promise<void>((resolve,reject)=>{
@@ -101,9 +142,10 @@ export function BrowserAgentPanel({tabId,tabs,onSearch,onNavigate,onBack,onForwa
   const run=async()=>{
     if(controller.current)return
     if(!goal.trim()){setStatus('请输入你想完成的任务');return}
+    const request=goal.trim()
     const abort=new AbortController()
     controller.current=abort
-    setBusy(true);setAnswer('');setActivity([]);setStatus('AI 正在准备…')
+    setBusy(true);setError('');setActiveGoal(request);setActivity([]);setStatus('正在准备…')
     try{
       const runtimeConfig=await loadAgentConfig()
       if(abort.signal.aborted)throw abortError()
@@ -155,10 +197,7 @@ export function BrowserAgentPanel({tabId,tabs,onSearch,onNavigate,onBack,onForwa
         return {operation:result,observation:await freshPage()}
       }
       const runtime:ReActRuntime={
-        onActivity:message=>{
-          const name=Object.entries(LABELS).find(([,label])=>label===message)?.[1]||message
-          setStatus(name)
-        },
+        onActivity:message=>setStatus(LABELS[message as AgentToolName]||message),
         performTool:async(name,args,signal):Promise<AgentToolResult>=>{
           if(signal.aborted)throw abortError()
           setStatus(LABELS[name]||'AI 正在操作网页')
@@ -250,43 +289,147 @@ export function BrowserAgentPanel({tabId,tabs,onSearch,onNavigate,onBack,onForwa
         },
       }
       const initial=await browserAgentState()
-      const result=await runReActAgent(runtimeConfig,goal.trim(),{...initial,uiTabId:tabId},runtime,abort.signal)
+      const result=await runReActAgent(runtimeConfig,request,{...initial,uiTabId:tabId,
+        previousTurns:turns.slice(-3).map(turn=>({goal:turn.goal,answer:turn.answer.slice(0,1600)}))},runtime,abort.signal)
       if(abort.signal.aborted)throw abortError()
-      setAnswer(result)
+      setTurns(previous=>[...previous.slice(-7),{goal:request,answer:result}])
+      setGoal('')
+      setActiveGoal('')
       setStatus('已完成')
-    }catch(error){if(!abort.signal.aborted)setStatus(error instanceof Error?error.message:'浏览任务失败')}
-    finally{if(controller.current===abort){controller.current=null;setBusy(false)}}
+    }catch(failure){
+      if(!abort.signal.aborted){
+        const message=failure instanceof Error?failure.message:'浏览任务失败'
+        setError(message);setStatus(message);setActiveGoal('')
+      }
+    }finally{if(controller.current===abort){controller.current=null;setBusy(false)}}
   }
 
   const save=async()=>{
+    if(saving)return
+    setSaving(true);setError('')
     try{await saveAgentConfig(config);setEditing(false);setStatus('配置已保存')}
-    catch(error){setStatus(error instanceof Error?error.message:'保存失败')}
+    catch(failure){const message=failure instanceof Error?failure.message:'保存失败';setError(message);setStatus(message)}
+    finally{setSaving(false)}
+  }
+  const copyResult=async(index:number,markdown:string)=>{
+    try{await navigator.clipboard.writeText(markdown);setCopied(index)}
+    catch{setError('无法复制内容，请重试')}
+  }
+  const keyDown=(event:KeyboardEvent<HTMLTextAreaElement>)=>{
+    if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){
+      event.preventDefault()
+      void run()
+    }
+  }
+  const requestClose=()=>{
+    if(busy){setClosePrompt(true);return}
+    onClose()
   }
 
-  return <section aria-label="AI 浏览助手" className="relative shrink-0 border-t border-haze bg-ink-raised p-3 text-paper" style={{maxHeight:'min(56dvh,450px)',overflowY:'auto'}}>
-    <div className="mb-2 flex items-center justify-between"><strong className="text-[15px]">AI 浏览助手</strong><div className="flex gap-3 text-[13px]">
-      <button type="button" onClick={()=>setEditing(!editing)} disabled={busy||!configReady}>API 设置</button>
-      <button type="button" onClick={()=>{stop();onClose()}}>关闭</button>
-    </div></div>
-    {editing&&<div className="mb-3 grid gap-2 text-[13px]">
-      <label>Base URL<input aria-label="Agent Base URL" className="mt-1 w-full rounded-lg border border-haze bg-ink p-2" value={config.endpoint} onChange={e=>setConfig({...config,endpoint:e.target.value})}/></label>
-      <label>Model<input aria-label="Agent Model" className="mt-1 w-full rounded-lg border border-haze bg-ink p-2" value={config.model} onChange={e=>setConfig({...config,model:e.target.value})}/></label>
-      <label>API Key<input aria-label="Agent API Key" type="password" autoComplete="off" className="mt-1 w-full rounded-lg border border-haze bg-ink p-2" value={config.apiKey} onChange={e=>setConfig({...config,apiKey:e.target.value})}/></label>
-      <label className="flex items-center gap-2"><input type="checkbox" aria-label="允许局域网 HTTP" checked={config.allowLanHttp===true} onChange={e=>setConfig({...config,allowLanHttp:e.target.checked})}/>允许局域网 HTTP（API Key 明文传输）</label>
-      <button type="button" onClick={()=>{void save()}} className="rounded-lg bg-paper px-3 py-2 font-medium text-ink">保存配置</button>
-    </div>}
-    <textarea aria-label="AI 浏览任务" rows={2} disabled={busy} value={goal} onChange={e=>setGoal(e.target.value)} placeholder="一句话告诉 AI 想做什么，例如：搜索最新的 Qwen 模型评价…" className="w-full resize-none rounded-lg border border-haze bg-ink p-2 text-[14px]"/>
-    {approval&&<div role="alertdialog" aria-label="确认 AI 网页操作" className="absolute inset-x-3 bottom-3 z-20 rounded-lg border border-haze bg-ink p-3 text-[13px] shadow-xl">
-      <p className="mb-2">{approval}</p>
-      <div className="flex gap-2"><button type="button" onClick={()=>approvalResolve.current?.(true)} className="rounded-md bg-paper px-3 py-2 font-medium text-ink">允许这一步</button>
-        <button type="button" onClick={()=>approvalResolve.current?.(false)} className="rounded-md border border-haze px-3 py-2">拒绝</button></div>
-    </div>}
-    <div className="mt-2 flex items-center gap-3">
-      <button type="button" disabled={busy||!configReady} onClick={()=>{void run()}} className="rounded-lg bg-paper px-4 py-2 text-[13px] font-medium text-ink disabled:opacity-50">开始任务</button>
-      <button type="button" disabled={!busy} onClick={stop} className="rounded-lg border border-haze px-4 py-2 text-[13px] disabled:opacity-50">停止</button>
-      <span role="status" className="min-w-0 flex-1 text-[12px] text-paper-muted">{status}</span>
+  return <section ref={sheetRef} aria-label="AI 浏览助手" role="region" hidden={minimized}
+    data-agent-sheet data-dragging={dragging?'true':'false'} data-fullscreen={isFull?'true':'false'}
+    className="agent-sheet" style={{height:height+'px',maxHeight:'calc(100dvh - var(--sat))'}}>
+    <div role="separator" tabIndex={0} aria-label="拖动调整 AI 面板高度" aria-orientation="horizontal"
+      aria-valuenow={Math.round(height)} aria-valuemin={limits().min} aria-valuemax={limits().max}
+      className="agent-grip-area shrink-0" onPointerDown={onPointerDown} onPointerMove={onPointerMove}
+      onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd} onDoubleClick={expand}
+      onKeyDown={event=>{
+        if(event.key==='ArrowUp'||event.key==='ArrowDown'){
+          event.preventDefault();snapTo(height+(event.key==='ArrowUp'?40:-40))
+        }else if(event.key==='Home'){event.preventDefault();snapTo(limits().min)}
+        else if(event.key==='End'){event.preventDefault();snapTo(limits().max)}
+      }}>
+      <span className="agent-grip"/>
     </div>
-    {busy&&activity.length>0&&<p className="mt-1 truncate text-[11px] text-paper-muted">{activity.slice(-3).join(' · ')}</p>}
-    {answer&&<div className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-ink p-3 text-[13px] leading-relaxed">{answer}</div>}
+    <header className="flex min-h-[51px] shrink-0 items-center gap-2 border-b border-haze/70 px-4 pb-2">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-[13px] bg-haze/70 text-paper"><Bot size={20} strokeWidth={1.75}/></span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2"><h2 className="truncate text-[15px] font-semibold tracking-[-.015em]">AI 浏览助手</h2>
+          {busy&&<LoaderCircle size={14} className="shrink-0 animate-spin text-cinnabar" aria-hidden="true"/>}</div>
+        <p className="truncate text-[11.5px] leading-[1.4] text-paper-muted">{editing?'模型与连接设置':busy?'正在执行任务':tabs.length?tabs.find(tab=>tab.active)?.title||'浏览器': '随时开始浏览任务'}</p>
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <button type="button" aria-label={editing?'返回任务':'API 设置'} aria-pressed={editing} disabled={busy&&!editing||!configReady}
+          className="agent-icon-button" onClick={()=>{setError('');setEditing(value=>!value)}}><Settings2 size={19}/></button>
+        <button type="button" aria-label={isFull?'恢复半屏':'展开全屏'} aria-pressed={isFull} className="agent-icon-button" onClick={expand}>
+          {isFull?<Minimize2 size={19}/>:<Maximize2 size={19}/>}</button>
+        <button type="button" aria-label="收起 AI 面板" className="agent-icon-button" onClick={onMinimize}><ChevronDown size={21}/></button>
+        <button type="button" aria-label="关闭 AI 浏览助手" className="agent-icon-button" onClick={requestClose}><X size={20}/></button>
+      </div>
+    </header>
+    {editing?<div className="agent-transcript px-5 py-5" data-agent-settings>
+      <div className="mb-5"><h3 className="text-[18px] font-semibold">模型设置</h3><p className="mt-1 text-[13px] leading-relaxed text-paper-muted">连接支持工具调用的 OpenAI 兼容模型。</p></div>
+      <form className="grid gap-4 text-[13px]" onSubmit={event=>{event.preventDefault();void save()}}>
+        <label className="grid gap-1.5 font-medium">API 地址
+          <input aria-label="Agent Base URL" spellCheck={false} autoCapitalize="off" autoCorrect="off" className="agent-field min-h-11 px-3 text-[14px] font-normal" value={config.endpoint} onChange={event=>setConfig(previous=>({...previous,endpoint:event.target.value}))} placeholder="https://api.openai.com/v1" />
+        </label>
+        <label className="grid gap-1.5 font-medium">模型
+          <input aria-label="Agent Model" spellCheck={false} autoCapitalize="off" autoCorrect="off" className="agent-field min-h-11 px-3 text-[14px] font-normal" value={config.model} onChange={event=>setConfig(previous=>({...previous,model:event.target.value}))} placeholder="支持工具调用的模型名称"/>
+        </label>
+        <label className="grid gap-1.5 font-medium">API Key
+          <div className="relative"><input aria-label="Agent API Key" type={showKey?'text':'password'} autoComplete="off" spellCheck={false} className="agent-field min-h-11 px-3 pr-11 text-[14px] font-normal" value={config.apiKey} onChange={event=>setConfig(previous=>({...previous,apiKey:event.target.value}))}/>
+            <button type="button" aria-label={showKey?'隐藏 API Key':'显示 API Key'} className="absolute inset-y-0 right-1 flex w-10 items-center justify-center text-paper-muted" onClick={()=>setShowKey(value=>!value)}>{showKey?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>
+        </label>
+        <label className="flex min-h-10 items-center justify-between gap-3"><span className="min-w-0"><span className="block font-medium">允许局域网 HTTP</span><span className="block text-[12px] leading-relaxed text-paper-muted">仅用于本地模型，密钥将以明文传输</span></span>
+          <input type="checkbox" aria-label="允许局域网 HTTP" checked={config.allowLanHttp===true} onChange={event=>setConfig(previous=>({...previous,allowLanHttp:event.target.checked}))} className="size-5 accent-cinnabar"/></label>
+        {error&&<div role="alert" className="flex gap-2 text-[13px] leading-relaxed text-cinnabar"><AlertCircle size={17} className="mt-0.5 shrink-0"/>{error}</div>}
+        <div className="mt-1 flex justify-end gap-2"><button type="button" className="agent-secondary" onClick={()=>{setEditing(false);setError('')}}>取消</button>
+          <button type="submit" disabled={saving} className="agent-primary">{saving?<LoaderCircle size={16} className="animate-spin"/>:<Check size={16}/>}保存配置</button></div>
+      </form>
+    </div>:<>
+      <div ref={scrollRef} className="agent-transcript" data-agent-transcript>
+        {turns.length===0&&!activeGoal&&<div className="px-5 pb-6 pt-8">
+          <span className="mb-4 flex size-12 items-center justify-center rounded-2xl bg-haze/70 text-paper"><Bot size={26} strokeWidth={1.5}/></span>
+          <h3 className="text-[21px] font-semibold tracking-[-.035em] leading-tight">一句话，交给 AI 浏览</h3>
+          <p className="mt-2 max-w-[320px] text-[14px] leading-[1.7] text-paper-muted">自动搜索、浏览与整理结果，也可以操作当前网页。</p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            {(tabId?[ '总结当前网页', '查找相关资料' ]:[ '搜索今日科技资讯', '查找某个网站' ]).map(suggestion=><button type="button" key={suggestion} onClick={()=>setGoal(suggestion)} className="rounded-full border border-haze px-3.5 py-2 text-[13px] text-paper-muted transition-colors active:bg-haze">{suggestion}</button>)}
+          </div>
+        </div>}
+        {turns.map((turn,index)=><div key={index} data-agent-turn className="px-5 pt-5">
+          <div className="ml-auto max-w-[92%] rounded-2xl rounded-tr-md bg-haze/70 px-3.5 py-3 text-[14px] leading-relaxed text-paper">{turn.goal}</div>
+          <div className="mt-5 pb-2">
+            <div className="mb-3 flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-[12px] font-semibold text-paper-muted"><Bot size={15}/>浏览结果</span>
+              <button type="button" aria-label="复制 AI 回答" className="agent-icon-button !size-8" onClick={()=>{void copyResult(index,turn.answer)}}>
+                {copied===index?<CheckCheck size={16}/>:<Copy size={16}/>}</button></div>
+            <AgentMarkdown markdown={turn.answer} onNavigate={onNavigate}/>
+          </div>
+          {index<turns.length-1&&<div className="mt-4 border-t border-haze"/>}
+        </div>)}
+        {activeGoal&&<div className="px-5 pb-4 pt-5">
+          <div className="ml-auto max-w-[92%] rounded-2xl rounded-tr-md bg-haze/70 px-3.5 py-3 text-[14px] leading-relaxed text-paper">{activeGoal}</div>
+        </div>}
+        {busy&&<div className="px-5 pb-5 pt-1" data-agent-running>
+          <div className="flex items-center gap-2.5 text-[13px] font-medium"><LoaderCircle size={16} className="shrink-0 animate-spin text-cinnabar"/><span role="status" className="min-w-0 truncate">{status}</span></div>
+          {activity.length>0&&<div className="ml-[7px] mt-3 grid gap-2 border-l border-haze pl-[19px]">
+            {activity.slice(-3).map((item,index)=><p key={index} className="flex items-center gap-2 text-[12px] text-paper-muted"><CircleCheck size={13} className="shrink-0"/>{item.replace(/^正在/,'已')}</p>)}
+          </div>}
+        </div>}
+        {!busy&&error&&<div role="alert" className="mx-5 my-4 flex items-start gap-2 rounded-xl border border-haze p-3 text-[13px] leading-relaxed text-cinnabar"><AlertCircle size={17} className="shrink-0"/>{error}</div>}
+      </div>
+      <div className="agent-composer px-4 pb-3 pt-3" data-agent-composer>
+        <div className="flex items-end gap-2 rounded-[17px] border border-haze bg-ink p-1.5 pl-3">
+          <textarea aria-label="AI 浏览任务" rows={2} disabled={busy} value={goal} onChange={event=>setGoal(event.target.value)} onKeyDown={keyDown}
+            placeholder="告诉 AI 你想搜索、阅读或操作什么…" className="min-h-[44px] max-h-[120px] min-w-0 flex-1 resize-none bg-transparent px-0 py-2 text-[14px] leading-[1.55] text-paper outline-none placeholder:text-paper-faint disabled:opacity-50"/>
+          <button type="button" disabled={!configReady||(!busy&&!goal.trim())} onClick={()=>{if(busy)stop();else void run()}}
+            aria-label={busy?'停止':'开始任务'} className="agent-primary !size-10 !min-h-10 !shrink-0 !rounded-[12px] !p-0" title={busy?'停止':'开始任务'}>
+            {busy?<Square size={16} fill="currentColor"/>:<ArrowUp size={20} strokeWidth={2.5}/>}</button>
+        </div>
+        <div className="mt-2 flex items-center justify-between gap-3 px-1 text-[11.5px] leading-5 text-paper-muted">
+          <span role="status" className="min-w-0 flex-1 truncate">{!busy?status||'就绪':'AI 正在自主操作浏览器'}</span>
+          {busy&&<button type="button" onClick={stop} className="shrink-0 text-paper underline underline-offset-4">停止</button>}
+        </div>
+      </div>
+    </>}
+    {(approval||closePrompt)&&<div className="absolute inset-0 z-30 flex items-end justify-center bg-ink/70 px-4 pb-[calc(var(--sab)+18px)]" role="presentation">
+      <div role="alertdialog" aria-label={approval?'确认 AI 网页操作':'停止并关闭 AI'} className="w-full max-w-md rounded-[19px] border border-haze bg-ink-raised p-5 shadow-xl">
+        <h3 className="text-[16px] font-semibold">{approval?'确认网页操作':'停止当前任务？'}</h3>
+        <p className="mt-2 text-[13px] leading-[1.65] text-paper-muted">{approval||'关闭后本次任务将停止。也可以先收起面板，让任务继续运行。'}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="agent-secondary" onClick={()=>{if(approval)approvalResolve.current?.(false);else setClosePrompt(false)}}>{approval?'拒绝':'继续任务'}</button>
+          <button type="button" className="agent-primary" onClick={()=>{if(approval)approvalResolve.current?.(true);else {stop();onClose()}}}>{approval?'允许这一步':'停止并关闭'}</button>
+        </div>
+      </div>
+    </div>}
   </section>
 }

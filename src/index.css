@@ -38,6 +38,7 @@
 
 @import './styles/history-editorial.css';
 @import './features/browser/browser.css';
+@import './features/browser/agent/agent.css';
 
 @import './styles/buer.css';
 

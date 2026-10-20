@@ -1,6 +1,17 @@
 /** Real Android end-to-end smoke: BYOK form -> mock Chat Completions -> native WebView actions. */
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import {execFileSync} from 'node:child_process'
+import {mkdirSync,writeFileSync} from 'node:fs'
+import path from 'node:path'
+const snapshotDirectory=process.env.AGENT_QA_DIR
+function capture(name){
+  if(!snapshotDirectory)return
+  mkdirSync(snapshotDirectory,{recursive:true})
+  writeFileSync(path.join(snapshotDirectory,name+'.png'),execFileSync('D:/Android/Sdk/platform-tools/adb.exe',[
+    '-s',process.env.AGENT_EMULATOR||'emulator-5560','exec-out','screencap','-p',
+  ]))
+}
 const port=Number(process.env.CDP_PORT||9231)
 const fixturePort=Number(process.env.AGENT_FIXTURE_PORT||8765)
 let calls=0
@@ -29,7 +40,8 @@ const server=http.createServer(async(req,res)=>{
     const elements=page?.elements||latestPage?.elements||[]
     const has=(text)=>Boolean(page?.text?.includes(text))
     let action=null,answer=null
-    if(task==='搜索 Qwen3.8'){
+    if(task==='Markdown 格式验证')answer='## 查阅结果\n\n- **重点**：浏览器已完成阅读。\n- [来源](https://example.org/source)\n\n| 模型 | 特点 |\n| --- | --- |\n| Qwen | 本地部署 |\n\n```ts\nconst total = 3\n```'
+    else if(task==='搜索 Qwen3.8'){
       if(!lastName)action=['browser_open_url',{url:`http://10.0.2.2:${fixturePort}/`}]
       else if(has('Search:Qwen3.8'))answer='已在真实网页中搜索 Qwen3.8'
       else if(lastName==='browser_open_url')action=['browser_type',{id:elements.find(x=>x.tag==='input')?.id,text:'Qwen3.8'}]
@@ -101,18 +113,55 @@ try{
     const body=await evaluate(`document.body?.innerText?.slice(-1500)`)
     throw new Error(`Timed out waiting for ${expression}; UI=${body}`)
   }
-  function click(label){return evaluate(`(()=>{const element=[...document.querySelectorAll('button')].find(node=>node.textContent.trim()==${JSON.stringify(label)});if(!element)return false;element.click();return true})()`)}
+  function click(label){return evaluate(`(()=>{const element=[...document.querySelectorAll('button')].find(node=>node.textContent.trim()==${JSON.stringify(label)}||node.getAttribute('aria-label')===${JSON.stringify(label)});if(!element)return false;element.click();return true})()`)}
   async function fill(selector,value){return evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)return false;const setter=Object.getOwnPropertyDescriptor(el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set;setter.call(el,${JSON.stringify(value)});el.dispatchEvent(new Event('input',{bubbles:true}));return true})()`)}
   try{
     await wait(850)
-    await evaluate(`(()=>{const skip=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='稍后再说');if(skip){skip.click();return true}return false})()`)
+    await evaluate(`(()=>{const popover=document.querySelector('.driver-popover-close-btn');if(popover){popover.click();return true}const skip=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='稍后再说');if(skip){skip.click();return true}return false})()`)
+    await waitUntil(`!document.querySelector('.driver-popover.newsnook-tour')`,{tries:20,interval:160})
     await wait(750)
     console.log('Open UI:',await evaluate(`window.dispatchEvent(new CustomEvent('newsnook:open-browser',{detail:{}}))`))
     await waitUntil(`!!document.querySelector('[aria-label="NewsNook 网页浏览器"]')`)
     await waitUntil(`document.querySelector('[aria-label="AI 浏览助手"]')!==null`)
     await evaluate(`document.querySelector('button[aria-label="AI 浏览助手"]').click()`)
     await waitUntil(`!!document.querySelector('section[aria-label="AI 浏览助手"]')`)
-    await waitUntil(`!([...document.querySelectorAll('section[aria-label="AI 浏览助手"] button')].find(el=>el.textContent.trim()==='API 设置')?.disabled)`)
+    await waitUntil(`!document.querySelector('button[aria-label="API 设置"]')?.disabled`)
+    const original=await evaluate(`(()=>{const sheet=document.querySelector('[data-agent-sheet]');return {height:sheet.getBoundingClientRect().height,top:sheet.getBoundingClientRect().top,screen:window.innerHeight}})()`)
+    assert(original.height>original.screen*.3&&original.height<original.screen*.75,`initial half-screen size: ${JSON.stringify(original)}`)
+    capture('01-half-idle')
+    const beforeKeyboard=await evaluate(`({innerHeight:window.innerHeight,visualHeight:window.visualViewport?.height,composerBottom:document.querySelector('[data-agent-composer]').getBoundingClientRect().bottom})`)
+    const composeRect=await evaluate(`(()=>{const r=document.querySelector('textarea[aria-label="AI 浏览任务"]').getBoundingClientRect();return {x:r.left+Math.min(30,r.width/2),y:r.top+r.height/2}})()`)
+    const scale=await evaluate(`window.devicePixelRatio`)
+    execFileSync('D:/Android/Sdk/platform-tools/adb.exe',['-s',process.env.AGENT_EMULATOR||'emulator-5560','shell','input','tap',String(Math.round(composeRect.x*scale)),String(Math.round(composeRect.y*scale))])
+    await wait(1200)
+    const keyboardOpen=await evaluate(`({innerHeight:window.innerHeight,visualHeight:window.visualViewport?.height,composerBottom:document.querySelector('[data-agent-composer]').getBoundingClientRect().bottom})`)
+    console.log('Keyboard geometry',beforeKeyboard,keyboardOpen)
+    if(keyboardOpen.visualHeight<beforeKeyboard.visualHeight-80)
+      assert(keyboardOpen.composerBottom<=keyboardOpen.visualHeight+6,'composer must remain visible above keyboard')
+    await evaluate(`document.activeElement?.blur()`)
+    await wait(500)
+    const handle=await evaluate(`(()=>{const rect=document.querySelector('.agent-grip-area').getBoundingClientRect();return {x:Math.round(rect.left+rect.width/2),y:Math.round(rect.top+rect.height/2)}})()`)
+    await call('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:handle.x,y:handle.y}]})
+    for(let step=1;step<=6;step++){
+      await call('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:handle.x,y:handle.y-step*15}]})
+      await wait(38)
+    }
+    await call('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]})
+    await wait(320)
+    const afterDrag=await evaluate(`document.querySelector('[data-agent-sheet]').getBoundingClientRect().height`)
+    assert(afterDrag>original.height+40,`drag should resize continuously: ${original.height}->${afterDrag}`)
+    capture('01b-dragged')
+    assert(await click('展开全屏'))
+    await waitUntil(`document.querySelector('[data-agent-sheet]')?.dataset.fullscreen==='true'`)
+    await wait(290)
+    const full=await evaluate(`document.querySelector('[data-agent-sheet]').getBoundingClientRect().height`)
+    const fullscreenGeometry=await evaluate(`(()=>{const s=document.querySelector('[data-agent-sheet]');const w=document.querySelector('[aria-label="NewsNook 网页浏览器"]');return {sheetTop:s.getBoundingClientRect().top,sheetHeight:s.getBoundingClientRect().height,windowHeight:window.innerHeight,paddingTop:parseFloat(getComputedStyle(w).paddingTop)}})()`)
+    assert(Math.abs(fullscreenGeometry.sheetTop-fullscreenGeometry.paddingTop)<4,'fullscreen should reach the safe-area top')
+    assert(full>original.height*1.3,'maximize should expand the sheet')
+    capture('02-fullscreen')
+    assert(await click('恢复半屏'))
+    await waitUntil(`document.querySelector('[data-agent-sheet]')?.dataset.fullscreen==='false'`)
+    await wait(290)
     assert(await click('API 设置'),'API settings button absent')
     await waitUntil(`!!document.querySelector('input[aria-label="Agent Base URL"]')`)
     assert(await fill('input[aria-label="Agent Base URL"]',`http://localhost:${fixturePort}/v1`))
@@ -126,12 +175,22 @@ try{
     assert.equal(persisted.endpoint,`http://localhost:${fixturePort}/v1`)
     assert.equal(persisted.model,'mock-agent')
     assert(await fill('textarea[aria-label="AI 浏览任务"]','搜索 Qwen3.8'))
-    await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.includes('开始任务')`)
+    await waitUntil(`!!document.querySelector('button[aria-label="开始任务"]')`)
     assert(await click('开始任务'))
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"] [role="status"]')?.textContent==='已完成'`,{tries:95,interval:350})
     const result=await evaluate(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.slice(-250)`)
     assert.match(result,/真实网页中搜索 Qwen3\.8/)
     assert(calls>=4)
+    const frameBefore=await evaluate(`(async()=>{const plugin=window.Capacitor.Plugins.NewsNookBrowser;const state=await plugin.state();const response=await plugin.agentAction({action:'observe',tabId:state.tabId});return response.result.viewport.height})()`)
+    assert(frameBefore>100,'native WebView should have meaningful viewport before maximizing')
+    assert(await click('展开全屏'))
+    await waitUntil(`document.querySelector('[data-agent-sheet]')?.dataset.fullscreen==='true'`)
+    await wait(350)
+    const frameFull=await evaluate(`(async()=>{const plugin=window.Capacitor.Plugins.NewsNookBrowser;const state=await plugin.state();const response=await plugin.agentAction({action:'observe',tabId:state.tabId});return response.result.viewport.height})()`)
+    assert(Math.abs(frameBefore-frameFull)<8,`WebView layout must not change with sheet: ${frameBefore} -> ${frameFull}`)
+    assert(await click('恢复半屏'))
+    await waitUntil(`document.querySelector('[data-agent-sheet]')?.dataset.fullscreen==='false'`)
+    await wait(350)
     assert(await fill('textarea[aria-label="AI 浏览任务"]','打开新标签页'))
     assert(await click('开始任务'))
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.includes('新标签页已打开')`,{tries:110,interval:350})
@@ -149,7 +208,9 @@ try{
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.includes('选项已更改')`,{tries:75,interval:350})
     assert(await fill('textarea[aria-label="AI 浏览任务"]','删除条目'))
     assert(await click('开始任务'))
+    assert(await click('收起 AI 面板'))
     await waitUntil(`!!document.querySelector('[aria-label="确认 AI 网页操作"]')`,{tries:65,interval:300})
+    assert.equal(await evaluate(`document.querySelector('[data-agent-sheet]')?.hidden`),false,'approval must reopen the minimized sheet')
     assert(await click('拒绝'))
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.includes('操作已拒绝，未执行删除')`,{tries:75,interval:350})
     assert(await fill('textarea[aria-label="AI 浏览任务"]','删除条目'))
@@ -160,19 +221,43 @@ try{
     assert(await fill('textarea[aria-label="AI 浏览任务"]','视觉点击'))
     assert(await click('开始任务'))
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"]')?.textContent?.includes('视觉点击已完成')`,{tries:75,interval:350})
+    assert(await fill('textarea[aria-label="AI 浏览任务"]','Markdown 格式验证'))
+    assert(await click('开始任务'))
+    await waitUntil(`document.querySelector('[data-agent-transcript]')?.querySelector('.agent-markdown table')!==null`,{tries:75,interval:350})
+    const rendered=await evaluate(`(()=>{const md=[...document.querySelectorAll('.agent-markdown')].at(-1);return {heading:md?.querySelector('h2')?.textContent,rows:md?.querySelectorAll('tr').length,code:md?.querySelector('pre code')?.textContent,link:md?.querySelector('a')?.getAttribute('href')}})()`)
+    assert.equal(rendered.heading,'查阅结果')
+    assert.equal(rendered.rows,2)
+    assert.match(rendered.code,/const total/)
+    assert.equal(rendered.link,'https://example.org/source')
+    await wait(350)
+    const visibleResult=await evaluate(`(()=>{const transcript=document.querySelector('[data-agent-transcript]');const result=[...transcript.querySelectorAll('.agent-markdown h2')].at(-1);if(!result)return false;const pane=transcript.getBoundingClientRect(),heading=result.getBoundingClientRect();return heading.top>=pane.top-2&&heading.top<pane.bottom-20})()`)
+    assert(visibleResult,'latest Markdown result heading must be visible without manual scrolling')
+    capture('03-markdown-result')
+    assert(await click('收起 AI 面板'))
+    await waitUntil(`document.querySelector('[data-agent-sheet]')?.hidden===true`)
+    assert(await click('AI 浏览助手'))
+    await waitUntil(`document.querySelector('[data-agent-sheet]')?.hidden===false`)
+    assert.equal((await evaluate(`document.querySelectorAll('.agent-markdown table').length`)),1,'collapse should preserve content')
+    execFileSync('D:/Android/Sdk/platform-tools/adb.exe',['-s',process.env.AGENT_EMULATOR||'emulator-5560','shell','input','keyevent','4'])
+    await waitUntil(`document.querySelector('[data-agent-sheet]')?.hidden===true`,{tries:25,interval:150})
+    assert(await click('AI 浏览助手'))
+    await waitUntil(`document.querySelector('[data-agent-sheet]')?.hidden===false`)
     assert(await fill('textarea[aria-label="AI 浏览任务"]','停止测试'))
     assert(await click('开始任务'))
     await waitUntil(`document.querySelector('section[aria-label="AI 浏览助手"] [role="status"]')?.textContent?.includes('正在分析')`,{tries:30,interval:200})
+    assert(await click('关闭 AI 浏览助手'))
+    await waitUntil(`!!document.querySelector('[aria-label="停止并关闭 AI"]')`)
+    assert(await click('继续任务'))
     assert(await click('停止'))
     await wait(2200)
     const stopped=await evaluate(`document.querySelector('section[aria-label="AI 浏览助手"] [role="status"]')?.textContent`)
     assert.equal(stopped,'已停止')
     assert(requests.every(req=>req.model==='mock-agent'))
-    console.log('PASS: BYOK, Keystore, mock LLM, DOM/visual tools, dropdown, tabs, approvals and stop')
+    console.log('PASS: half/full layout, BYOK, Keystore, ReAct, Markdown tables/code/links, native DOM/visual tools, tabs, approvals, collapse and stop')
   }finally{
     try{await evaluate(`window.Capacitor.Plugins.SecureStore.remove({key:'browser.agent.apiKey'})`)}catch{}
     try{await evaluate(`localStorage.removeItem('newsnook.browser.agent.config.v1')`)}catch{}
-    try{await evaluate(`([...document.querySelectorAll('section[aria-label="AI 浏览助手"] button')].find(el=>el.textContent.trim()==='关闭'))?.click()`)}catch{}
+    try{await evaluate(`document.querySelector('button[aria-label="关闭 AI 浏览助手"]')?.click()`)}catch{}
     try{await evaluate(`document.querySelector('button[aria-label="返回有所闻"]')?.click()`)}catch{}
   }
 }finally{socket?.close();await new Promise(resolve=>server.close(resolve))}

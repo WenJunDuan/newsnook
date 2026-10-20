@@ -5,6 +5,7 @@ import android.app.Dialog;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -15,6 +16,7 @@ import android.os.Looper;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -160,6 +162,40 @@ public class BrowserHostPlugin extends Plugin {
         boolean includeSubdomains;
         int retirementGeneration;
         SiteDataClear(PluginCall call, String host) { this.call = call; this.host = host; }
+    }
+
+    /**
+     * A native WebView is layered ABOVE Capacitor's HTML UI. Rather than shrink the
+     * WebView when an AI sheet opens (which changes CSS viewport and DOM positions),
+     * clip only the rendered/touchable portion. Web content keeps its real layout.
+     */
+    private static final class ClippedBrowserFrame extends FrameLayout {
+        private int occludedBottomPx;
+
+        ClippedBrowserFrame(Context context) { super(context); }
+
+        void setOccludedBottom(int pixels) {
+            int next = Math.max(0, pixels);
+            if (occludedBottomPx == next) return;
+            occludedBottomPx = next;
+            invalidate();
+        }
+
+        @Override public void draw(Canvas canvas) {
+            if (occludedBottomPx == 0) { super.draw(canvas); return; }
+            int save = canvas.save();
+            canvas.clipRect(0, 0, getWidth(), Math.max(0, getHeight() - occludedBottomPx));
+            super.draw(canvas);
+            canvas.restoreToCount(save);
+        }
+
+        @Override public boolean dispatchTouchEvent(MotionEvent event) {
+            // Let the Capacitor HTML layer underneath handle dragging and clicking
+            // inside the assistant sheet. Native web content remains interactive above.
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN
+                    && event.getY() >= Math.max(0, getHeight() - occludedBottomPx)) return false;
+            return super.dispatchTouchEvent(event);
+        }
     }
 
     private SiteDataClear siteDataClear;
@@ -568,6 +604,7 @@ public class BrowserHostPlugin extends Plugin {
         boolean visible = Boolean.TRUE.equals(call.getBoolean("visible", true));
         float top = call.getFloat("top", 0f);
         float bottom = call.getFloat("bottom", 0f);
+        float occludedBottom = call.getFloat("occludedBottom", 0f);
         onUi(call, () -> {
             savePrivacyPreference(requestedSettings.privateMode);
             closeNative();
@@ -580,8 +617,11 @@ public class BrowserHostPlugin extends Plugin {
                 preferences = getContext().getSharedPreferences("newsnook-native-browser", Context.MODE_PRIVATE);
                 browserSettings = requestedSettings;
                 updatePalette(palette);
-                if (embed) createEmbedded(top, bottom);
-                else createDialog();
+                if (embed) {
+                    createEmbedded(top, bottom);
+                    if (pageFrame instanceof ClippedBrowserFrame)
+                        ((ClippedBrowserFrame) pageFrame).setOccludedBottom(dp(occludedBottom));
+                } else createDialog();
                 if (recovery != null) {
                     restoreTabs(recovery);
                     call.resolve();
@@ -695,9 +735,12 @@ public class BrowserHostPlugin extends Plugin {
         float top = call.getFloat("top", 0f);
         float bottom = call.getFloat("bottom", 0f);
         boolean visible = Boolean.TRUE.equals(call.getBoolean("visible", true));
+        float occludedBottom = call.getFloat("occludedBottom", 0f);
         onUi(call, () -> {
             if (!embeddedMode || pageFrame == null) { call.resolve(); return; }
             setEmbeddedBounds(top, bottom);
+            if (pageFrame instanceof ClippedBrowserFrame)
+                ((ClippedBrowserFrame) pageFrame).setOccludedBottom(dp(occludedBottom));
             // 拖拽面板期间会高频更新可视区域。仅在显隐真正改变时切换 WebView 生命周期，
             // 否则每帧 onResume()/onPause() 都会干扰渲染与视频播放。
             if (embeddedVisible != visible) {
@@ -942,7 +985,7 @@ public class BrowserHostPlugin extends Plugin {
         pageFrame.setLayoutParams(params);
     }
     private void createEmbedded(float top, float bottom) {
-        pageFrame = new FrameLayout(getActivity());
+        pageFrame = new ClippedBrowserFrame(getActivity());
         pageFrame.setBackgroundColor(Color.WHITE);
         pageFrame.setVisibility(embeddedVisible ? View.VISIBLE : View.GONE);
         embeddedRoot().addView(pageFrame, new FrameLayout.LayoutParams(-1, -1, Gravity.TOP));

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bookmark, BookmarkCheck, ChevronRight, Clock3, Copy,
   Download, Film, Globe2, Home, Images, Laptop, LockKeyhole, LogOut, ScanText, Share2, Shield,
-  MoreHorizontal, Pencil, Play, Plus, RefreshCw, Search, Settings2, ShieldCheck, Square, Trash2, X,
+  MoreHorizontal, Pencil, Play, Plus, RefreshCw, Search, Settings2, ShieldCheck, Square, Trash2, X, Bot,
 } from 'lucide-react'
 import { Share } from '@capacitor/share'
 import { useHardwareBackLayer } from '../../hooks/useHardwareBackLayer'
@@ -27,7 +27,6 @@ import { BrowserImagesPanel } from './BrowserImagesPanel'
 import { useBrowserDialogFocus } from './useBrowserDialogFocus'
 import { BrowserIconButton, BrowserSheet } from './BrowserPrimitives'
 import { BrowserAgentPanel } from './agent/BrowserAgentPanel'
-import { Sparkles } from 'lucide-react'
 import { BrowserStartPage } from './BrowserStartPage'
 import { BrowserSearchPanel } from './BrowserSearchPanel'
 import { BrowserPlacesPanel } from './BrowserPlacesPanel'
@@ -57,6 +56,9 @@ export function BrowserWorkspace({
   const [panel, setPanel] = useState<Panel>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)
+  const [agentMinimized, setAgentMinimized] = useState(false)
+  const [agentBusy, setAgentBusy] = useState(false)
+  const agentSheetRef = useRef<HTMLElement>(null)
   const [placeAction, setPlaceAction] = useState<PlaceAction | null>(null)
   const [shortcutDraft, setShortcutDraft] = useState<ShortcutDraft | null>(null)
   const [draftError, setDraftError] = useState('')
@@ -127,7 +129,9 @@ export function BrowserWorkspace({
     persist(BROWSER_KEYS.history, next, () => {historyRef.current = next; setHistory(next)})
   }, [persist])
   const covered = Boolean(panel || searchOpen || placeAction || shortcutDraft || confirmation || playing)
-  const session = useBrowserSession(viewport, covered, recordVisit, bottomAddress, recoverySession, {settings: preferences})
+  const session = useBrowserSession(viewport, covered, recordVisit, bottomAddress, recoverySession, {
+    settings: preferences, agentSheetRef, agentSheetVisible: agentOpen && !agentMinimized && !covered,
+  })
   const current = session.state.url || ''
   const clearPageFind = session.clearFind
   useEffect(() => {setFindOpen(false); clearPageFind()}, [current, session.state.tabId, clearPageFind])
@@ -170,6 +174,7 @@ export function BrowserWorkspace({
     if (panel) {if (panel === 'images') session.invalidateImages(); setPanel(null); return true}
     if (findOpen) {closeFind(); return true}
     if (playing) {setPlaying(null); return true}
+    if (agentOpen && !agentMinimized) {setAgentMinimized(true); return true}
     // The first navigation event can precede open's acknowledgement while scripts prepare.
     // Closing bypasses that pending operation, so Back always remains immediately effective.
     if (!session.ready) {close(); return true}
@@ -230,8 +235,8 @@ export function BrowserWorkspace({
     window.addEventListener(BROWSER_OPEN_EVENT, handleOpen)
     return () => window.removeEventListener(BROWSER_OPEN_EVENT, handleOpen)
   }, [session])
-  const showSearch = () => {if (findOpen) closeFind(); setPanel(null); session.setError(''); setSearchOpen(true)}
-  const openPanel = (next: Panel) => {setSearchOpen(false); setPanel(next)}
+  const showSearch = () => {if (findOpen) closeFind(); setAgentMinimized(true); setPanel(null); session.setError(''); setSearchOpen(true)}
+  const openPanel = (next: Panel) => {if(next)setAgentMinimized(true);setSearchOpen(false);setPanel(next)}
   const runCommand = (command: BrowserCommand) => {
     setPanel(null)
     void session.command(command).then(ok => {
@@ -352,7 +357,7 @@ export function BrowserWorkspace({
     {label:'浏览历史', icon:Clock3, action:() => openPanel('history')},
     {label:'下载管理', icon:Download, action:() => runCommand('downloads')},
     {label:'媒体资源', icon:Film, action:() => {openPanel('media'); if (active) void session.command('scanMedia')}, disabled:!active, badge:resources.length ? String(resources.length) : undefined},
-    {label:'AI 浏览助手', icon:Sparkles, action:()=>{setPanel(null);setAgentOpen(true)}},
+    {label:'AI 浏览助手', icon:Bot, action:()=>{setPanel(null);setAgentMinimized(false);setAgentOpen(true)}},
     {label:'用户脚本', icon:ShieldCheck, action:() => openPanel('scripts'), badge:active ? String(session.state.activeScriptCount ?? 0) : undefined},
     {label:'脚本菜单', icon:Settings2, action:() => runCommand('scriptMenu'), disabled:!active},
     {label:'新建标签', icon:Plus, action:() => runCommand('new'), disabled:session.tabs.length >= 6},
@@ -385,7 +390,13 @@ export function BrowserWorkspace({
       <BrowserIconButton label="标签页" disabled={session.pending} onClick={() => openPanel('tabs')}>
         <span className="flex size-[18px] items-center justify-center rounded-[4px] border-[1.5px] border-current text-[10.5px] font-bold leading-none tabular-nums select-none">{session.tabs.length || 1}</span>
       </BrowserIconButton>
-      <BrowserIconButton label="AI 浏览助手" onClick={() => {setPanel(null);setAgentOpen(value=>!value)}} pressed={agentOpen}><Sparkles size={19}/></BrowserIconButton>
+      <BrowserIconButton label={agentBusy?'AI 浏览助手（运行中）':'AI 浏览助手'} onClick={() => {
+        setPanel(null)
+        if (!agentOpen) {setAgentOpen(true);setAgentMinimized(false)}
+        else setAgentMinimized(value=>!value)
+      }} pressed={agentOpen&&!agentMinimized}><span className="relative"><Bot size={20} strokeWidth={1.8}/>
+          {agentBusy&&<span aria-hidden="true" className="absolute -right-1 -top-1 size-[6px] rounded-full bg-cinnabar"/>}
+        </span></BrowserIconButton>
       <BrowserIconButton label="网页工具" onClick={() => openPanel(panel === 'menu' ? null : 'menu')}><MoreHorizontal size={20} strokeWidth={1.8}/></BrowserIconButton>
     </div>
     {session.state.loading && <div role="progressbar" aria-label="网页加载进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={session.state.progress ?? 0}
@@ -430,12 +441,14 @@ export function BrowserWorkspace({
       </div>}
     </div>
     {agentOpen && <BrowserAgentPanel tabId={session.state.tabId} loading={session.state.loading} progress={session.state.progress}
-      tabs={session.tabs} onSearch={query=>session.open(BROWSER_ENGINES[search].url+encodeURIComponent(query))}
+      tabs={session.tabs} sheetRef={agentSheetRef} minimized={agentMinimized} onMinimize={()=>setAgentMinimized(true)}
+      onNeedAttention={()=>{setPanel(null);setSearchOpen(false);setAgentMinimized(false)}} onBusyChange={setAgentBusy}
+      onSearch={query=>session.open(BROWSER_ENGINES[search].url+encodeURIComponent(query))}
       onNavigate={session.open} onBack={()=>session.command('back')} onForward={()=>session.command('forward')}
       onNewTab={async url => (await session.command('new')) && (await session.open(url))}
       onSwitchTab={index => {const tab=session.tabs.find(t=>t.index===index);return tab?session.activate(tab):Promise.resolve(false)}}
       onCloseTab={index => {const tab=session.tabs.find(t=>t.index===index);return tab?session.remove(tab):Promise.resolve(false)}}
-      onClose={()=>setAgentOpen(false)}/>}
+      onClose={()=>{setAgentOpen(false);setAgentMinimized(false);setAgentBusy(false)}}/>}
     {bottomAddress && toolbar}
 
     {searchOpen && <BrowserSearchPanel privateMode={privateMode} current={active ? current : ''} initialValue={active ? current : ''} engine={search} history={history}

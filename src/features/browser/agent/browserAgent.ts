@@ -175,7 +175,7 @@ export async function runReActAgent(config:AgentConfig,goal:string,initialContex
         try {
           const args=JSON.parse(call.function.arguments||'{}') as AgentToolArguments
           if(!args || typeof args!=='object' || Array.isArray(args))throw new Error('工具参数必须为对象')
-          runtime.onActivity?.(entry.description.slice(0,60))
+          runtime.onActivity?.(entry.name)
           const executed=await runtime.performTool(entry.name,args,signal)
           if(signal.aborted)throw abortError()
           toolResult={ok:true,data:executed.result}
