@@ -429,7 +429,12 @@ export function BrowserWorkspace({
         </div>
       </div>}
     </div>
-    {agentOpen && <BrowserAgentPanel tabId={session.state.tabId} loading={session.state.loading} onNavigate={session.open} onBack={()=>session.command('back')} onClose={()=>setAgentOpen(false)}/>}
+    {agentOpen && <BrowserAgentPanel tabId={session.state.tabId} loading={session.state.loading} progress={session.state.progress}
+      tabs={session.tabs} onNavigate={session.open} onBack={()=>session.command('back')} onForward={()=>session.command('forward')}
+      onNewTab={async url => (await session.command('new')) && (await session.open(url))}
+      onSwitchTab={index => {const tab=session.tabs.find(t=>t.index===index);return tab?session.activate(tab):Promise.resolve(false)}}
+      onCloseTab={index => {const tab=session.tabs.find(t=>t.index===index);return tab?session.remove(tab):Promise.resolve(false)}}
+      onClose={()=>setAgentOpen(false)}/>}
     {bottomAddress && toolbar}
 
     {searchOpen && <BrowserSearchPanel privateMode={privateMode} current={active ? current : ''} initialValue={active ? current : ''} engine={search} history={history}

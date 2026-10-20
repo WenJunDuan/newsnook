@@ -192,6 +192,7 @@ public class BrowserHostPlugin extends Plugin {
     private boolean activityPaused;
     private boolean embeddedVisible = true;
     private int scriptVersion;
+    private String agentScriptAsset;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private Tab fullscreenTab;
     private View customFullscreen;
@@ -749,6 +750,18 @@ public class BrowserHostPlugin extends Plugin {
         onUi(call, () -> { closeNative(); call.resolve(); });
     }
 
+    private String agentScriptSource() throws java.io.IOException {
+        if (agentScriptAsset != null) return agentScriptAsset;
+        try (java.io.InputStream input = getContext().getAssets().open("browser-agent.js");
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            byte[] chunk = new byte[4096];
+            int count;
+            while ((count = input.read(chunk)) != -1) out.write(chunk, 0, count);
+            agentScriptAsset = out.toString(java.nio.charset.StandardCharsets.UTF_8.name());
+            return agentScriptAsset;
+        }
+    }
+
     /** Agent actions apply only to the existing live browser WebView. No website Java bridge. */
     @PluginMethod public void agentAction(PluginCall call) {
         String action = call.getString("action", "");
@@ -756,6 +769,7 @@ public class BrowserHostPlugin extends Plugin {
         int id = call.getInt("id", -1);
         String content = call.getString("text", "");
         String direction = call.getString("direction", "down");
+        String snapshot = call.getString("snapshot", "");
         onUi(call, () -> {
             final Tab tab = current;
             if (tab == null || tab.webView == null || !isLive(tab, tab.webView)
@@ -787,40 +801,52 @@ public class BrowserHostPlugin extends Plugin {
             if ("tap".equals(action)) {
                 int x = call.getInt("x", -1), y = call.getInt("y", -1);
                 WebView view = tab.webView;
+                String pageUrl = tab.url;
                 if (x < 0 || y < 0 || x >= view.getWidth() || y >= view.getHeight()) {
                     call.reject("点击位置超出网页范围"); return;
                 }
-                long now = android.os.SystemClock.uptimeMillis();
-                android.view.MotionEvent down = android.view.MotionEvent.obtain(now, now,
-                    android.view.MotionEvent.ACTION_DOWN, x, y, 0);
-                android.view.MotionEvent up = android.view.MotionEvent.obtain(now, now + 80,
-                    android.view.MotionEvent.ACTION_UP, x, y, 0);
-                try {
-                    view.dispatchTouchEvent(down);
-                    view.dispatchTouchEvent(up);
-                    call.resolve(new JSObject().put("result", new JSObject().put("ok", true)));
-                } finally {down.recycle(); up.recycle();}
+                if (snapshot.isEmpty()) {call.reject("必须先观察网页才能点击"); return;}
+                String verify = "(function(){var s=window.__newsNookAgentSnapshot;"
+                    + "return !!s && s.snapshot === " + JSONObject.quote(snapshot)
+                    + " && s.url === location.href;})()";
+                view.evaluateJavascript(verify, valid -> {
+                    if (!"true".equals(valid) || !isLive(tab, view) || current != tab || !pageUrl.equals(tab.url)) {
+                        call.reject("网页状态已变化，请重新观察"); return;
+                    }
+                    long now = android.os.SystemClock.uptimeMillis();
+                    android.view.MotionEvent down = android.view.MotionEvent.obtain(now, now,
+                        android.view.MotionEvent.ACTION_DOWN, x, y, 0);
+                    android.view.MotionEvent up = android.view.MotionEvent.obtain(now, now + 80,
+                        android.view.MotionEvent.ACTION_UP, x, y, 0);
+                    try {
+                        view.dispatchTouchEvent(down);
+                        view.dispatchTouchEvent(up);
+                        call.resolve(new JSObject().put("result", new JSObject().put("ok", true)));
+                    } finally {down.recycle(); up.recycle();}
+                });
                 return;
             }
-            if (!java.util.Arrays.asList("observe", "click", "type", "submit", "scroll").contains(action)) {
+            if (!java.util.Arrays.asList("observe", "click", "type", "choose", "submit", "scroll").contains(action)) {
                 call.reject("不支持的 Agent 操作"); return;
             }
-            if (("click".equals(action) || "type".equals(action) || "submit".equals(action)) && (id < 0 || id >= 90)) {
+            if (("click".equals(action) || "type".equals(action) || "choose".equals(action) || "submit".equals(action)) && (id < 0 || id >= 90)) {
                 call.reject("无效元素编号"); return;
             }
             if (content.length() > 4000) {call.reject("输入内容过长"); return;}
             try {
-                java.io.InputStream input = getContext().getAssets().open("browser-agent.js");
-                byte[] bytes = new byte[input.available()];
-                int count = input.read(bytes); input.close();
-                if (count != bytes.length) {call.reject("Agent 脚本读取失败"); return;}
                 JSONObject args = new JSONObject();
-                args.put("action", action); args.put("id", id); args.put("text", content); args.put("direction", direction);
-                String script = new String(bytes, java.nio.charset.StandardCharsets.UTF_8).replace("__ARGS__", args.toString());
+                args.put("action", action); args.put("id", id); args.put("text", content);
+                args.put("direction", direction); args.put("snapshot", snapshot);
+                String script = agentScriptSource().replace("__ARGS__", args.toString());
                 WebView target = tab.webView;
                 String pageUrl = tab.url;
                 target.evaluateJavascript(script, encoded -> {
-                    if (!isLive(tab, target) || current != tab || !pageUrl.equals(tab.url)) {call.reject("网页已切换"); return;}
+                    if (!isLive(tab, target) || current != tab) {call.reject("网页已切换"); return;}
+                    if (!pageUrl.equals(tab.url)) {
+                        if ("observe".equals(action)) call.reject("网页正在跳转，请重新观察");
+                        else call.resolve(new JSObject().put("result", new JSObject().put("ok", true).put("navigated", true)));
+                        return;
+                    }
                     try {
                         Object decoded = new org.json.JSONTokener(encoded).nextValue();
                         JSONObject result = new JSONObject(String.valueOf(decoded));
