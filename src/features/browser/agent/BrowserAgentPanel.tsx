@@ -97,11 +97,20 @@ function StepList({steps,paused=false}:{steps:AgentStep[];paused?:boolean}){
       const Icon=step.status==='running'?waiting?Pause:LoaderCircle:unknown?CircleHelp:step.status==='succeeded'?CircleCheck:step.status==='cancelled'?CircleMinus:AlertCircle
       return <li key={step.id} className="agent-step" data-agent-step={step.id} data-state={step.status} data-paused={waiting||undefined}
         aria-label={step.label+'：'+(waiting?'已暂停':resultLabel)}>
-        <span className="agent-step-icon"><Icon size={16} aria-hidden="true" className={step.status==='running'&&!waiting?'animate-spin':undefined}/></span>
-        <div className="agent-step-copy"><span>{step.label}</span>
-          {(unknown||step.status==='failed'||step.status==='cancelled')&&<span className="ml-2 text-paper-muted">{resultLabel}</span>}
-          {step.detail&&<p className="agent-step-detail">{step.detail}</p>}
-        </div>
+        <details className="agent-step-record">
+          <summary className="agent-step-summary">
+            <span className="agent-step-icon"><Icon size={16} aria-hidden="true" className={step.status==='running'&&!waiting?'animate-spin':undefined}/></span>
+            <span className="agent-step-copy">{step.label}<span className="agent-step-status">{waiting?'已暂停':resultLabel}</span></span>
+            <ChevronRight className="agent-step-chevron" size={15} aria-hidden="true"/>
+          </summary>
+          <div className="agent-step-content">
+            <p className="agent-step-tool">{step.tool}</p>
+            {step.detail&&<section><h5>{step.status==='failed'?'失败原因':'执行情况'}</h5><p className="agent-step-detail">{step.detail}</p></section>}
+            {step.input&&<section><h5>调用参数</h5><pre>{step.input}</pre></section>}
+            {step.result&&<section><h5>返回结果</h5><pre>{step.result}</pre></section>}
+            {!step.detail&&!step.result&&<p className="agent-step-detail">{step.status==='running'?'正在执行，结果将在返回后显示。':step.status==='failed'?'未提供更详细的错误信息。':'该步骤未保留详细返回内容。'}</p>}
+          </div>
+        </details>
       </li>
     })}
   </ol>

@@ -483,9 +483,9 @@ export function BrowserWorkspace({
       onNeedAttention={()=>{setPanel(null);setSearchOpen(false);setAgentMinimized(false)}} onBusyChange={setAgentBusy}
       onOperatingChange={setAgentOperating}
       onBrowserConfig={(request,signal,approve)=>{configApprovalRef.current=approve;return agentConfigRef.current!.execute(request,signal)}}
-      onSearch={query=>session.open(BROWSER_ENGINES[searchRef.current].url+encodeURIComponent(query))}
+      onSearch={query=>session.open(BROWSER_ENGINES[searchRef.current].url+encodeURIComponent(query),true)}
       searchUrl={query=>BROWSER_ENGINES[searchRef.current].url+encodeURIComponent(query)}
-      onNavigate={session.open} onBack={()=>session.command('back')} onForward={()=>session.command('forward')}
+      onNavigate={url=>session.open(url,true)} onBack={()=>session.command('back')} onForward={()=>session.command('forward')}
       onNewTab={async url => (await session.command('new')) && (await session.open(url))}
       onSwitchTab={index => {const tab=session.tabs.find(t=>t.index===index);return tab?session.activate(tab):Promise.resolve(false)}}
       onCloseTab={index => {const tab=session.tabs.find(t=>t.index===index);return tab?session.remove(tab):Promise.resolve(false)}}

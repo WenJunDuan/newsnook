@@ -317,8 +317,10 @@ final class BrowserAgentRuntime {
             if (!observation.optBoolean("ok")) { failure.accept(observation.optString("error", "截图前无法确认网页画面")); return; }
             lastSnapshot = snapshot;
             String document = documentId;
+            boolean[] settled = {false};
             Runnable draw = () -> {
-                if (!permitted.getAsBoolean() || closed || !document.equals(documentId)) return;
+                if (settled[0] || !permitted.getAsBoolean() || closed || !document.equals(documentId)) return;
+                settled[0] = true;
                 int width = view.getWidth(), height = view.getHeight();
                 if (width <= 0 || height <= 0 || bounds.isEmpty()) { failure.accept("网页尚未显示"); return; }
                 Bitmap bitmap = null;
@@ -345,12 +347,24 @@ final class BrowserAgentRuntime {
             };
             // Drawing after this callback includes committed DOM, image, Canvas and WebGL updates.
             try {
-                if (WebViewFeature.isFeatureSupported(WebViewFeature.VISUAL_STATE_CALLBACK))
+                // Screen-off windows do not commit compositor frames. Draw the pre-rasterized
+                // WebView directly after the observation response instead of waiting forever.
+                if (view.getWindowVisibility() != android.view.View.VISIBLE) main.post(draw);
+                else if (WebViewFeature.isFeatureSupported(WebViewFeature.VISUAL_STATE_CALLBACK)) {
                     WebViewCompat.postVisualStateCallback(view, 0, new WebViewCompat.VisualStateCallback() {
                         @Override public void onComplete(long requestId) { draw.run(); }
                     });
+                    long deadline = android.os.SystemClock.uptimeMillis() + TIMEOUT_MS;
+                    main.postDelayed(new Runnable() {
+                        @Override public void run() {
+                            if (settled[0] || closed || !document.equals(documentId) || !permitted.getAsBoolean()) return;
+                            if (view.getWindowVisibility() != android.view.View.VISIBLE) draw.run();
+                            else if (android.os.SystemClock.uptimeMillis() < deadline) main.postDelayed(this, 100);
+                        }
+                    }, 100);
+                }
                 else main.post(draw);
-            } catch (RuntimeException error) { failure.accept("网页截图暂不可用"); }
+            } catch (RuntimeException error) { settled[0] = true; failure.accept("网页截图暂不可用"); }
         }, failure);
     }
 

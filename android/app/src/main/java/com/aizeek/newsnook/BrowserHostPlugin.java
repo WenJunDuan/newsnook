@@ -324,6 +324,7 @@ public class BrowserHostPlugin extends Plugin {
     private volatile boolean closing;
     private boolean destroyed;
     private boolean activityPaused;
+    private boolean agentBackgroundHeld;
     private boolean embeddedVisible = true;
     private int scriptVersion;
     private String agentScriptAsset;
@@ -886,6 +887,7 @@ public class BrowserHostPlugin extends Plugin {
             // visible bounds at dispatch, while real View layout/scroll events retire it.
             if (current != null && previousVisible != null && !previousVisible.equals(agentVisibleBounds(current.webView)))
                 cancelAgentInputForViewport(current);
+            layoutBackgroundAgent();
             call.resolve();
         });
     }
@@ -961,6 +963,14 @@ public class BrowserHostPlugin extends Plugin {
                     if ("start".equals(action)) agentOwner.start(runId, tab.id);
                     else agentOwner.resume(runId, tab.id);
                     tab.agent.resume(runId);
+                    try {
+                        BrowserAgentForegroundService.acquire(getContext(), () -> pauseAgentForHuman("background_service_stopped"));
+                        agentBackgroundHeld = true;
+                        tab.webView.getSettings().setOffscreenPreRaster(true);
+                    } catch (RuntimeException error) {
+                        pauseAgentForHuman("background_service_failed");
+                        call.reject("无法启动后台任务服务，请重试"); return;
+                    }
                     call.resolve(agentSessionState());
                     return;
                 }
@@ -968,6 +978,7 @@ public class BrowserHostPlugin extends Plugin {
                 agentOwner.requireOwner(runId);
                 Tab tab = findAgentTab(agentOwner.tabId());
                 if ("stop".equals(action)) agentOwner.stop(runId); else agentOwner.pause(runId);
+                releaseAgentBackground();
                 if (agentFiles != null) {
                     if ("stop".equals(action)) agentFiles.cancelRun(runId);
                     else if (tab != null && tab.agent != null) agentFiles.cancelDocument(tab.id, tab.agent.documentId());
@@ -1026,11 +1037,20 @@ public class BrowserHostPlugin extends Plugin {
         }
     }
 
+    private void releaseAgentBackground() {
+        if (!agentBackgroundHeld) return;
+        agentBackgroundHeld = false;
+        BrowserAgentForegroundService.release(getContext());
+        for (Tab tab : tabs) if (tab.webView != null) tab.webView.getSettings().setOffscreenPreRaster(false);
+        syncTabActivity();
+    }
+
     private void pauseAgentForHuman(String reason) {
         if (!agentOwner.isRunning()) return;
         String runId = agentOwner.runId();
         Tab tab = findAgentTab(agentOwner.tabId());
         agentOwner.pause(runId);
+        releaseAgentBackground();
         if (tab != null && tab.agent != null) {
             tab.agent.invalidateVisual();
             if (agentFiles != null) agentFiles.cancelDocument(tab.id, tab.agent.documentId());
@@ -1063,7 +1083,8 @@ public class BrowserHostPlugin extends Plugin {
         int bottom = view.getHeight();
         if (pageFrame instanceof ClippedBrowserFrame)
             bottom = Math.min(bottom, pageFrame.getHeight() - ((ClippedBrowserFrame) pageFrame).occludedBottomPx - view.getTop());
-        if (activityPaused || embeddedMode && !embeddedVisible || customFullscreen != null) return new Rect();
+        if (activityPaused && !(agentBackgroundHeld && agentOwner.isRunning())
+                || embeddedMode && !embeddedVisible || customFullscreen != null) return new Rect();
         return new Rect(view.getPaddingLeft(), view.getPaddingTop(),
             Math.max(view.getPaddingLeft(), view.getWidth() - view.getPaddingRight()),
             Math.max(view.getPaddingTop(), bottom - view.getPaddingBottom()));
@@ -1929,6 +1950,7 @@ public class BrowserHostPlugin extends Plugin {
             ViewGroup parent = (ViewGroup) tab.webView.getParent();
             if (parent != null) parent.removeView(tab.webView);
             pageFrame.addView(tab.webView, new FrameLayout.LayoutParams(-1, -1));
+            layoutBackgroundAgent();
             return;
         }
         LinearLayout errorPage = new LinearLayout(getActivity());
@@ -1952,12 +1974,34 @@ public class BrowserHostPlugin extends Plugin {
         pageFrame.addView(errorPage, new FrameLayout.LayoutParams(-1, -1));
     }
 
+    private void layoutBackgroundAgent() {
+        if (!activityPaused || !agentBackgroundHeld || !agentOwner.isRunning() || pageFrame == null) return;
+        int width = pageFrame.getWidth(), height = pageFrame.getHeight();
+        int left = pageFrame.getLeft(), top = pageFrame.getTop();
+        if (embeddedMode && pageFrame.getParent() instanceof View) {
+            View parent = (View) pageFrame.getParent();
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) pageFrame.getLayoutParams();
+            if (parent.getWidth() > 0 && parent.getHeight() > 0) {
+                left = params.leftMargin; top = params.topMargin;
+                width = parent.getWidth() - left - params.rightMargin;
+                height = parent.getHeight() - top - params.bottomMargin;
+            }
+        }
+        // A stopped window has no traversal; new tabs still need the established viewport.
+        if (width <= 0 || height <= 0) return;
+        pageFrame.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+        pageFrame.layout(left, top, left + width, top + height);
+    }
+
     private void syncTabActivity() {
         if (current == null || current.webView == null) return;
-        boolean active = !closing && !activityPaused && (!embeddedMode || embeddedVisible);
+        boolean active = !closing && (!activityPaused || agentBackgroundHeld && agentOwner.isRunning()) && (!embeddedMode || embeddedVisible);
         if (active) current.webView.onResume();
         else current.webView.onPause();
-        if (current.media != null) current.media.setActive(active);
+        current.webView.getSettings().setOffscreenPreRaster(agentBackgroundHeld && agentOwner.isRunning());
+        layoutBackgroundAgent();
+        if (current.media != null) current.media.setActive(active && !activityPaused);
     }
     private void updateChrome() {
         if (current == null) return;
@@ -2252,6 +2296,7 @@ public class BrowserHostPlugin extends Plugin {
             if (agentOwner.tabId() == tab.id && !agentTabTransition) {
                 if (agentFiles != null) agentFiles.cancelRun(agentOwner.runId());
                 agentOwner.stopCurrent();
+                releaseAgentBackground();
                 agentBarrier = false;
                 notifyListeners("agentSessionState", agentSessionState().put("reason", rendererGone ? "renderer_exit" : "tab_closed"));
             }
@@ -2295,6 +2340,7 @@ public class BrowserHostPlugin extends Plugin {
         boolean wasOpen = pageFrame != null || dialog != null || !tabs.isEmpty();
         closing=true;
         agentOwner.stopCurrent();
+        releaseAgentBackground();
         agentDialogs.close(true);
         if (agentFiles != null) { agentFiles.close(); agentFiles = null; }
         SiteDataClear clearing = siteDataClear;
@@ -2320,7 +2366,14 @@ public class BrowserHostPlugin extends Plugin {
         activityPaused = true;
         // An explicit document picker owns the foreground temporarily; cancelling it here
         // would cancel every upload immediately after the chooser opens.
-        if (launchedChooserId == null) pauseAgentForHuman("background");
+        if (launchedChooserId == null && !agentBackgroundHeld) pauseAgentForHuman("background");
+        syncTabActivity();
+    }
+
+    @Override protected void handleOnStop() {
+        // Capacitor/Cordova may pause its controller WebView after handleOnPause.
+        if (agentBackgroundHeld && agentOwner.isRunning() && getBridge() != null)
+            getBridge().getWebView().onResume();
         syncTabActivity();
     }
 

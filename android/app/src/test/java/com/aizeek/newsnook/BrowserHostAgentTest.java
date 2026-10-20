@@ -40,6 +40,12 @@ import org.robolectric.util.ReflectionHelpers.ClassParameter;
 @Config(sdk = 34, shadows = {BrowserHostAgentTest.ResponsiveWebView.class, BrowserHostAgentTest.RecordingJsResult.class})
 @LooperMode(LooperMode.Mode.PAUSED)
 public class BrowserHostAgentTest {
+    @Implements(androidx.webkit.WebViewFeature.class)
+    public static class VisualStateFeature {
+        @Implementation protected static boolean isFeatureSupported(String feature) {
+            return androidx.webkit.WebViewFeature.VISUAL_STATE_CALLBACK.equals(feature);
+        }
+    }
     @Implements(JsResult.class)
     public static class RecordingJsResult {
         boolean confirmed, cancelled;
@@ -50,6 +56,8 @@ public class BrowserHostAgentTest {
     public static class ResponsiveWebView extends ShadowWebView {
         @RealObject private WebView realWebView;
         final List<Integer> touchActions = new ArrayList<>();
+        boolean deferVisual;
+        WebView.VisualStateCallback visualCallback;
         @Implementation protected boolean onTouchEvent(MotionEvent event) { touchActions.add(event.getActionMasked()); return true; }
         @Implementation protected boolean setFrame(int left, int top, int right, int bottom) {
             // The default WebView provider stub skips View.setFrame; use real View geometry.
@@ -60,7 +68,9 @@ public class BrowserHostAgentTest {
             if (callback != null && "void 0".equals(script)) callback.onReceiveValue("null");
             else if (callback != null && script.startsWith("{\"action\":\"validate\"")) callback.onReceiveValue("{\"ok\":true}");
         }
-        @Implementation protected void postVisualStateCallback(long id, WebView.VisualStateCallback callback) { callback.onComplete(id); }
+        @Implementation protected void postVisualStateCallback(long id, WebView.VisualStateCallback callback) {
+            if (deferVisual) visualCallback = callback; else callback.onComplete(id);
+        }
     }
     private AppCompatActivity activity;
     private Host host;
@@ -128,6 +138,33 @@ public class BrowserHostAgentTest {
         return new Rect(bounds.getInt("left"), bounds.getInt("top"), bounds.getInt("right"), bounds.getInt("bottom"));
     }
 
+    @Test @Config(shadows = {ResponsiveWebView.class, RecordingJsResult.class, VisualStateFeature.class},
+        instrumentedPackages = {"androidx.webkit"})
+    public void screenOffAfterScreenshotRegistrationDoesNotWaitForACompositorFrame() throws Exception {
+        int[] visibility = {View.VISIBLE};
+        WebView view = new WebView(activity) {
+            @Override public int getWindowVisibility() { return visibility[0]; }
+        };
+        view.layout(0, 0, 360, 640);
+        ResponsiveWebView shadow = Shadow.extract(view);
+        shadow.deferVisual = true;
+        BrowserAgentRuntime runtime = new BrowserAgentRuntime(view, "__ARGS__", () -> true, false);
+        List<org.json.JSONObject> captures = new ArrayList<>();
+        try {
+            assertEquals("window visibility", View.VISIBLE, view.getWindowVisibility());
+            assertTrue("visual callback feature", androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.VISUAL_STATE_CALLBACK));
+            runtime.capture("run", "shot", 1, "snapshot", new Rect(0, 0, 360, 640), () -> true, captures::add, error -> fail(error));
+            Shadows.shadowOf(Looper.getMainLooper()).idle();
+            assertNotNull(shadow.visualCallback); assertTrue(captures.isEmpty());
+            visibility[0] = View.GONE;
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(250));
+            assertEquals(1, captures.size());
+            visibility[0] = View.VISIBLE;
+            shadow.visualCallback.onComplete(0);
+            assertEquals("a late compositor callback cannot complete twice", 1, captures.size());
+        } finally { runtime.close(false); view.destroy(); }
+    }
+
     @Test public void temporarySheetOcclusionRejectsTheShotButRestoringBoundsPreservesIt() throws Exception {
         WebView view = view(); FrameLayout frame = (FrameLayout) field(host, "pageFrame");
         frame.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(640, View.MeasureSpec.EXACTLY));
@@ -188,6 +225,52 @@ public class BrowserHostAgentTest {
         assertNull(stopped.error); assertNotNull(navigate.error);
         queued.run();
         assertNotEquals("https://example.com/later", Shadows.shadowOf(view).getLastLoadedUrl());
+    }
+
+    @Test public void runningAgentSurvivesActivityPauseAndCanStillNavigate() throws Exception {
+        FrameLayout frame = (FrameLayout) field(host, "pageFrame");
+        frame.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(640, View.MeasureSpec.EXACTLY));
+        frame.layout(0, 0, 360, 640); view().layout(0, 0, 360, 640);
+        Call start = session("start", "run");
+        assertNull(start.error);
+        Rect bounds = visibleRect(); assertFalse(bounds.isEmpty());
+        host.handleOnPause();
+        assertEquals("running", ((BrowserAgentSession) field(host, "agentOwner")).state());
+        assertFalse(visibleRect().isEmpty());
+        assertEquals(view().getWidth(), visibleRect().width());
+        assertEquals(view().getHeight(), visibleRect().height());
+        assertTrue((boolean) field(host, "agentBackgroundHeld"));
+        Call navigate = new Call("agentAction", args(start, "navigate", "run", "background-nav")
+            .put("url", "https://example.com/background"));
+        host.agentAction(navigate); await(navigate);
+        assertNull(navigate.error);
+        assertTrue(host.sessionEvents.isEmpty());
+        host.handleOnResume();
+        assertEquals("running", ((BrowserAgentSession) field(host, "agentOwner")).state());
+        session("stop", "run");
+        assertFalse((boolean) field(host, "agentBackgroundHeld"));
+    }
+
+    @Test public void pausedAgentCannotBeResumedFromBackground() throws Exception {
+        session("start", "run"); session("pause", "run");
+        host.handleOnPause();
+        assertNotNull(session("resume", "run").error);
+        assertEquals("paused", ((BrowserAgentSession) field(host, "agentOwner")).state());
+    }
+
+    @Test public void backgroundNewTabKeepsAUsableViewport() throws Exception {
+        FrameLayout frame = (FrameLayout) field(host, "pageFrame");
+        frame.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(640, View.MeasureSpec.EXACTLY));
+        frame.layout(0, 0, 360, 640); view().layout(0, 0, 360, 640);
+        Call start = session("start", "run");
+        host.handleOnPause();
+        Call open = new Call("agentAction", args(start, "new_tab", "run", "background-tab")
+            .put("url", "https://example.com/new"));
+        host.agentAction(open); await(open);
+        assertNull(open.error);
+        assertTrue(view().getWidth() > 0); assertTrue(view().getHeight() > 0);
+        assertFalse(visibleRect().isEmpty());
+        assertTrue((boolean) field(host, "agentBackgroundHeld"));
     }
 
     @Test public void previousRunCannotStopOrNavigateAfterNewOwnerStarts() throws Exception {

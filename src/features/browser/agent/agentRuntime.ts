@@ -3,9 +3,10 @@ import {
   type AgentElement, type AgentObservation, type AgentOperation, type AgentScreenshot,
   type AgentSessionState, type AgentToolArguments, type AgentToolName, type AgentToolResult, type ReActRuntime, type AgentFileArtifact, type AgentEventHandlers, type AgentFileImage,
 } from './browserAgent'
+import {agentStepData,agentStepError} from './agentStepDetails'
 
 export type AgentPhase = 'running'|'pausing'|'paused'|'handoff'|'resuming'|'stopping'|'stopped'
-export interface AgentStep {id:string;tool:AgentToolName;label:string;status:'running'|'succeeded'|'failed'|'cancelled';detail?:string;outcome?:'not_executed'|'executed'|'unknown'}
+export interface AgentStep {id:string;tool:AgentToolName;label:string;status:'running'|'succeeded'|'failed'|'cancelled';detail?:string;input?:string;result?:string;outcome?:'not_executed'|'executed'|'unknown'}
 export interface AgentApproval {id:string;reason:string;tool:AgentToolName;tabId?:number;url?:string;target?:string}
 export interface AgentHandoff {id:string;kind:'login'|'captcha'|'file_picker'|'manual';reason:string;tabId?:number;url?:string;title?:string}
 export type AgentArtifact = AgentFileArtifact
@@ -375,14 +376,15 @@ export function createBrowserAgentRuntime(options:BrowserAgentRuntimeOptions):Br
       }
       const deadline=Date.now()+timeout
       let observation:Awaited<ReturnType<typeof observe>>|undefined
+      let observationError:string|undefined
       do{
         await waitUntilReady(signal)
-        try{observation=await observe(false)}catch(error){if(signal.aborted)throw error}
+        try{observation=await observe(false);observationError=undefined}catch(error){if(signal.aborted)throw error;observation=undefined;observationError=agentStepError(error)}
         if(observation?.page && (!wanted||observation.page.text.includes(wanted))&&(!urlPart||observation.page.url.includes(urlPart)))return {result:observation}
         if(Date.now()>=deadline)break
         await delay(Math.min(350,Math.max(0,deadline-Date.now())),signal)
       }while(Date.now()<=deadline)
-      return {result:{matched:false,observation,message:'等待条件尚未满足'}}
+      return {result:{matched:false,observation,observationError,message:'等待 '+timeout+' 毫秒后，条件尚未满足'}}
     }
     if(!lastPage&&(['browser_click','browser_type','browser_choose','browser_submit','browser_upload_files'].includes(name)||name==='browser_scroll'&&args.id!=null))throw new Error('请先观察网页，获得当前元素编号后再操作')
     const page=await requirePage()
@@ -522,7 +524,7 @@ export function createBrowserAgentRuntime(options:BrowserAgentRuntimeOptions):Br
     performTool:async(name,args,_signal,expectedContextVersion)=>{
       await waitUntilReady(signal)
       const startingVersion=contextVersion
-      const step:AgentStep={id:id(),tool:name,label:AGENT_TOOL_LABELS[name],status:'running'}
+      const step:AgentStep={id:id(),tool:name,label:AGENT_TOOL_LABELS[name],status:'running',input:agentStepData(args)}
       options.onStep?.(step)
       try{
         const result=await operate(name,args,expectedContextVersion)
@@ -532,18 +534,21 @@ export function createBrowserAgentRuntime(options:BrowserAgentRuntimeOptions):Br
         const captured:AgentToolResult={...result,contextVersion:capturedVersion,
           context:startingVersion===capturedVersion?undefined:{...(data&&(data.page||data.observation)?{}:{page:lastPage}),files:[...artifacts.values()]}}
         const outcome=(result.result as {outcome?:AgentStep['outcome']}|null)?.outcome
-        options.onStep?.({...step,status:outcome==='unknown'?'failed':'succeeded',outcome,detail:outcome==='unknown'?'操作已发出，结果待确认':undefined})
+        const failed=outcome==='unknown'||data?.matched===false||data?.ok===false
+        const detail=outcome==='unknown'?['操作已发出，结果待确认',data?.observationError].filter(Boolean).join('\n'):
+          failed?[data?.message||data?.error||'工具未完成请求',data?.observationError].filter(Boolean).join('\n'):undefined
+        options.onStep?.({...step,status:failed?'failed':'succeeded',outcome,detail,result:agentStepData(result.result)})
         return captured
       }catch(error){
         if(!signal.aborted&&phase!=='stopping'&&phase!=='stopped'&&(error as {dispatched?:unknown})?.dispatched===true){
           const attempted=(error as {pageAtDispatch?:AgentObservation|null}).pageAtDispatch||lastPage
           uncertain.add(fingerprintFor(name,args,attempted));unresolvedDocuments.add(documentKey(attempted));invalidate()
-          const detail=error instanceof Error?error.message:String(error)
+          const detail=agentStepError(error)
           options.onStep?.({...step,status:'failed',outcome:'unknown',detail:'操作已发出，结果待确认：'+detail})
           return {result:{outcome:'unknown',observationError:detail,nextAction:'先观察或人工确认结果，禁止重放相同操作'}}
         }
         const dispatched=(error as {dispatched?:unknown})?.dispatched===true
-        options.onStep?.({...step,status:signal.aborted||phase!=='running'?'cancelled':'failed',outcome:dispatched?'unknown':'not_executed',detail:dispatched?'已停止，操作结果待确认':error instanceof Error?error.message:String(error)})
+        options.onStep?.({...step,status:signal.aborted||phase!=='running'?'cancelled':'failed',outcome:dispatched?'unknown':'not_executed',detail:(dispatched?'已停止，操作结果待确认\n':'')+agentStepError(error)})
         throw error
       }
     },

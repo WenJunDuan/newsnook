@@ -566,6 +566,8 @@ Android 侧由 `BrowserAgentSession`、`BrowserAgentRuntime`、`BrowserAgentInpu
 
 原生 WebView 能力按 Provider 功能探测，密码、OTP 与网站安全挑战交给用户完成。详细能力、流程、资源预算及真实设备验收边界见 [Browser Agent](./browser-agent.md)。
 
+用户启动网页 Agent 时，`BrowserAgentForegroundService` 用前台通知与有时限的 CPU 唤醒锁维持本地任务；`BrowserHostPlugin` 在息屏后台保留 WebView 执行与布局，截图不等待停止窗口的绘制回调。暂停、停止、关闭或渲染进程退出即释放；连续运行一小时后暂停，进程退出不恢复自动操作。服务不改变主阅读、云同步或本地持久化协议。
+
 ## 9. HTTP、代理与网络安全
 
 | 环境 | 行为 |

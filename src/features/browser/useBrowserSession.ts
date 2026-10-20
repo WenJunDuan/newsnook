@@ -264,7 +264,7 @@ export function useBrowserSession(
     }
     const schedule = () => {
       if (stopped || frame !== null) return
-      timeoutFrame = typeof requestAnimationFrame !== 'function'
+      timeoutFrame = typeof requestAnimationFrame !== 'function' || document.visibilityState === 'hidden'
       frame = timeoutFrame
         ? window.setTimeout(() => { frame = null; sync() }, 16)
         : requestAnimationFrame(() => { frame = null; sync() })
@@ -288,7 +288,7 @@ export function useBrowserSession(
     }
   }, [ready, visible, getBounds, viewport, bottomAddress, options.agentSheetVisible, options.agentSheetRef, options.agentOperating])
 
-  const enqueue = useCallback((operation: () => Promise<void>): Promise<boolean> => {
+  const enqueue = useCallback((operation: () => Promise<void>, throwOnError = false): Promise<boolean> => {
     const generation = epoch.current
     pendingCount.current++
     setPending(true)
@@ -302,6 +302,7 @@ export function useBrowserSession(
         return true
       } catch (failure) {
         if (live.current && generation === epoch.current) setError(failure instanceof Error ? failure.message : '操作失败，请重试')
+        if (throwOnError) throw failure
         return false
       } finally {
         pendingCount.current = Math.max(0, pendingCount.current - 1)
@@ -339,7 +340,7 @@ export function useBrowserSession(
     })
   }, [enqueue, ensureOpen, recoverySession])
 
-  const open = useCallback((url: string) => enqueue(() => ensureOpen(url)), [enqueue, ensureOpen])
+  const open = useCallback((url: string, throwOnError = false) => enqueue(() => ensureOpen(url), throwOnError), [enqueue, ensureOpen])
   const command = useCallback((action: BrowserCommand): Promise<boolean> => {
     if (action === 'stop') {
       const generation = epoch.current

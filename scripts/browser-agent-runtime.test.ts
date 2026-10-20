@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {createBrowserAgentRuntime, normalizeAgentObservation, type AgentBridge, type BrowserAgentRuntimeOptions} from '../src/features/browser/agent/agentRuntime'
 import {runReActAgent,type AgentObservation,type AgentOperation,type AgentEventHandlers} from '../src/features/browser/agent/browserAgent'
+import type {AgentStep} from '../src/features/browser/agent/agentRuntime'
 
 const page:AgentObservation={snapshot:'snapshot',url:'https://example.org',title:'页面',text:'完成',viewport:{width:400,height:800},tabId:7,documentId:'doc',frameId:'main',elements:[{id:0,tag:'button',role:'',text:'搜索',type:'',href:'',x:30,y:30}]}
 function fixture(overrides:Partial<AgentBridge>={},callbacks:Partial<BrowserAgentRuntimeOptions>={}){
@@ -11,6 +12,46 @@ function fixture(overrides:Partial<AgentBridge>={},callbacks:Partial<BrowserAgen
   const controller=new AbortController()
   const runtime=createBrowserAgentRuntime({signal:controller.signal,bridge,searchUrl:q=>'https://example.org/?q='+q,onSearch:async()=>true,onNavigate:async()=>true,onApproval:async()=>true,onHandoff:async()=> 'continue',...callbacks})
   return {runtime,calls,controller}
+}
+{
+  const steps:AgentStep[]=[]
+  const {runtime,controller}=fixture({state:async()=>({state:{loading:false,progress:0},tabs:[]})},
+    {onStep:step=>steps.push(step),onSearch:async()=>{throw Object.assign(new Error('无法连接搜索站点'),{code:'ERR_CONNECTION_RESET'})}})
+  await assert.rejects(()=>runtime.performTool('browser_search',{query:'测试检索'},controller.signal),/无法连接搜索站点/)
+  assert.match(steps.at(-1)?.detail||'',/ERR_CONNECTION_RESET/)
+  assert.match(steps.at(-1)?.input||'',/测试检索/)
+  await runtime.stop()
+}
+{
+  const steps:AgentStep[]=[]
+  const {runtime,controller}=fixture({}, {onStep:step=>steps.push(step)})
+  await runtime.start()
+  await runtime.performTool('browser_observe',{},controller.signal)
+  assert.match(steps.at(-1)?.result||'',/页面/,'successful steps retain inspectable results')
+  await runtime.performTool('browser_wait',{text:'未出现的文字',timeoutMs:0},controller.signal)
+  assert.equal(steps.at(-1)?.status,'failed','an unmet wait condition is not displayed as success')
+  assert.match(steps.at(-1)?.input||'',/未出现的文字/)
+  assert.match(steps.at(-1)?.detail||'',/条件|等待/)
+  await runtime.stop()
+}
+{
+  const steps:AgentStep[]=[]
+  const {runtime,controller}=fixture({action:async()=>{throw Object.assign(new Error('网页连接已断开'),{code:'WEBVIEW_GONE'})}}, {onStep:step=>steps.push(step)})
+  await runtime.start()
+  await runtime.performTool('browser_wait',{text:'完成',timeoutMs:0},controller.signal)
+  assert.match(steps.at(-1)?.detail||'',/网页连接已断开/,'wait preserves the actual observation failure')
+  assert.match(steps.at(-1)?.detail||'',/WEBVIEW_GONE/)
+  await runtime.stop()
+}
+{
+  const steps:AgentStep[]=[]
+  const {runtime,controller}=fixture({}, {onStep:step=>steps.push(step),onBrowserConfig:async()=>({apiKey:'hidden-secret',image:'hidden-image',text:'x'.repeat(20000),url:'https://example.org/?token=hidden-token'})})
+  await runtime.start()
+  await runtime.performTool('browser_config',{action:'inspect'},controller.signal)
+  const result=steps.at(-1)?.result||''
+  assert.ok(result.length>0&&result.length<=8000)
+  assert.doesNotMatch(result,/hidden-secret|hidden-image|hidden-token/)
+  await runtime.stop()
 }
 {
   const flat=normalizeAgentObservation({...page,frames:[{...page,frameId:'child',documentId:'child-document',snapshot:'child-shot',elements:[{...page.elements[0],id:0,text:'内部操作'}]}]})
