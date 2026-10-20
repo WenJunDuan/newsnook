@@ -104,6 +104,12 @@
             android:stopWithTask="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <service
+            android:name=".BrowserAgentPdfService"
+            android:exported="false"
+            android:isolatedProcess="true"
+            android:process=":agent_pdf" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

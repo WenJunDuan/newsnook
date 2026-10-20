@@ -1,15 +1,19 @@
-import {useEffect,useRef,useState,type RefObject,type KeyboardEvent} from 'react'
+import {useEffect,useLayoutEffect,useRef,useState,type RefObject,type KeyboardEvent} from 'react'
 import {
-  AlertCircle, ArrowUp, Bot, Check, CheckCheck, ChevronDown, CircleCheck, Copy,
-  Eye, EyeOff, LoaderCircle, Maximize2, Minimize2, Settings2, Square, X,
+  AlertCircle, ArrowUp, Bot, Check, CheckCheck, ChevronDown, ChevronRight, CircleCheck, CircleHelp,
+  CircleMinus, Copy, Eye, EyeOff, FileText, Hand, LoaderCircle, Maximize2, Minimize2,
+  Pause, Play, Settings2, Square, X,
 } from 'lucide-react'
 import {AgentMarkdown} from './AgentMarkdown'
 import {useAgentSheet} from './agentSheet'
 import {
-  agentApprovalReason,browserAgentAction,browserAgentState,loadAgentConfig,runReActAgent,saveAgentConfig,
-  type AgentConfig,type AgentObservation,type AgentScreenshot,type AgentTab,type AgentToolArguments,type AgentToolName,
-  type AgentToolResult,type ReActRuntime,
+  loadAgentConfig,runReActAgent,saveAgentConfig,
+  type AgentConfig,type AgentTab,type AgentToolName,
 } from './browserAgent'
+import {
+  createBrowserAgentRuntime,type BrowserAgentRuntime,type AgentStep,type AgentHandoff,
+  type AgentApproval,type AgentArtifact,type AgentPhase,
+} from './agentRuntime'
 
 interface Props {
   tabId?:number
@@ -21,7 +25,9 @@ interface Props {
   onMinimize:()=>void
   onNeedAttention:()=>void
   onBusyChange:(busy:boolean)=>void
+  onOperatingChange?:(operating:boolean)=>void
   onSearch:(query:string)=>Promise<boolean>
+  searchUrl:(query:string)=>string
   onNavigate:(url:string)=>Promise<boolean>
   onBack:()=>Promise<boolean>
   onForward:()=>Promise<boolean>
@@ -30,6 +36,8 @@ interface Props {
   onCloseTab:(index:number)=>Promise<boolean>
   onClose:()=>void
 }
+interface AgentTurn {id:string;goal:string;status:'completed'|'failed'|'stopped';answer?:string;detail?:string;steps:AgentStep[];artifacts:AgentArtifact[]}
+type RunOutcome='running'|'completed'|'failed'|'stopped'
 
 const LABELS:Partial<Record<AgentToolName,string>>={
   browser_search:'正在搜索网页',browser_open_url:'正在打开网址',browser_observe:'正在阅读网页',
@@ -39,65 +47,155 @@ const LABELS:Partial<Record<AgentToolName,string>>={
   browser_switch_tab:'正在切换标签页',browser_close_tab:'正在关闭标签页',
   browser_screenshot:'正在观察网页画面',browser_tap:'正在操作网页画面',
 }
-function abortError(){return new DOMException('任务已停止','AbortError')}
-function httpUrl(value:unknown):string {
-  if(typeof value!=='string')throw new Error('请提供完整的网址')
-  const parsed=new URL(value)
-  if(!['http:','https:'].includes(parsed.protocol)||!parsed.hostname||parsed.username||parsed.password)
-    throw new Error('只能打开有效的 HTTP/HTTPS 网页')
-  return parsed.href
+const STEP_STATUS={running:'进行中',succeeded:'已完成',failed:'失败',cancelled:'已取消'} as const
+const HANDOFF_TITLES={login:'请先完成登录',captcha:'请完成网页验证',file_picker:'请选择文件',manual:'由你操作网页'} as const
+const FILE_STATUS:Record<string,string>={
+  pending:'等待处理',queued:'等待下载',downloading:'下载中',running:'正在处理',
+  downloaded:'下载完成',completed:'已完成',complete:'已完成',succeeded:'已完成',ready:'可用',
+  selected:'已选择',uploaded:'已交给网页',processing:'正在处理',failed:'处理失败',
+  paused:'下载已暂停',interrupted:'下载已中断',cancelled:'已取消',canceled:'已取消',expired:'文件已失效',unavailable:'文件不可用',
 }
-function elementId(args:AgentToolArguments):number {
-  const id=args.id
-  if(!Number.isInteger(id)||typeof id!=='number'||id<0||id>=90)throw new Error('无效的页面元素编号，请重新观察')
-  return id
+function phaseLabel(phase:AgentPhase,finishing=false){
+  switch(phase){
+    case 'running':return '执行中'
+    case 'pausing':return '正在暂停'
+    case 'paused':return '已暂停'
+    case 'handoff':return '等待你操作'
+    case 'resuming':return '正在恢复'
+    case 'stopping':return finishing?'正在结束任务':'正在停止'
+    case 'stopped':return finishing?'已完成':'已停止'
+  }
 }
-function textArg(value:unknown):string {
-  if(typeof value!=='string'||!value.trim())throw new Error('请输入有效的内容')
-  return value.trim()
+function siteName(url?:string){
+  if(!url)return ''
+  try{return new URL(url).host}catch{return ''}
+}
+function fileSize(size:number){
+  if(!Number.isFinite(size)||size<0)return ''
+  if(size<1024)return size+' B'
+  if(size<1024*1024)return (size/1024).toFixed(1)+' KB'
+  return (size/(1024*1024)).toFixed(size<10*1024*1024?1:0)+' MB'
+}
+function fileStatus(file:AgentArtifact){
+  if(file.status==='ready'&&file.source==='download')return '下载完成'
+  if(file.status==='ready'&&file.source==='selected')return '已选择'
+  return FILE_STATUS[file.status]||'文件已登记'
+}
+function turnLabel(turn:AgentTurn){
+  if(turn.status==='completed')return '浏览结果'
+  if(turn.status==='failed')return '任务未完成'
+  return turn.steps.some(step=>step.outcome==='unknown')?'已停止，结果待确认':'任务已停止'
+}
+function StepList({steps,paused=false}:{steps:AgentStep[];paused?:boolean}){
+  if(!steps.length)return null
+  return <ol className="agent-step-list">
+    {steps.map(step=>{
+      const unknown=step.outcome==='unknown'
+      const resultLabel=unknown?(step.status==='cancelled'?'已停止，结果待确认':'结果待核实'):STEP_STATUS[step.status]
+      const waiting=paused&&step.status==='running'
+      const Icon=step.status==='running'?waiting?Pause:LoaderCircle:unknown?CircleHelp:step.status==='succeeded'?CircleCheck:step.status==='cancelled'?CircleMinus:AlertCircle
+      return <li key={step.id} className="agent-step" data-agent-step={step.id} data-state={step.status} data-paused={waiting||undefined}
+        aria-label={step.label+'：'+(waiting?'已暂停':resultLabel)}>
+        <span className="agent-step-icon"><Icon size={16} aria-hidden="true" className={step.status==='running'&&!waiting?'animate-spin':undefined}/></span>
+        <div className="agent-step-copy"><span>{step.label}</span>
+          {(unknown||step.status==='failed'||step.status==='cancelled')&&<span className="ml-2 text-paper-muted">{resultLabel}</span>}
+          {step.detail&&<p className="agent-step-detail">{step.detail}</p>}
+        </div>
+      </li>
+    })}
+  </ol>
+}
+function ArtifactList({artifacts}:{artifacts:AgentArtifact[]}){
+  if(!artifacts.length)return null
+  return <section className="mt-4" aria-label="任务文件" data-agent-artifacts>
+    <h4 className="text-[12px] font-medium text-paper-muted">文件</h4>
+    <ul className="agent-file-list">{artifacts.map(file=><li key={file.fileId} className="agent-file" data-agent-file={file.fileId}>
+      <span className="agent-file-icon"><FileText size={17} aria-hidden="true"/></span>
+      <div className="agent-file-copy"><p className="agent-file-name">{file.name}</p>
+        <p className="agent-file-detail">{[fileStatus(file),fileSize(file.size)].filter(Boolean).join(' · ')}</p>
+        {file.error&&<p className="agent-step-detail text-cinnabar">{file.error}</p>}
+      </div>
+    </li>)}</ul>
+  </section>
 }
 
-export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNeedAttention,onBusyChange,onSearch,onNavigate,onBack,onForward,onNewTab,onSwitchTab,onCloseTab,onClose}:Props){
+export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNeedAttention,onBusyChange,onOperatingChange,onSearch,searchUrl,onNavigate,onClose}:Props){
   const [config,setConfig]=useState<AgentConfig>({endpoint:'https://api.openai.com/v1',apiKey:'',model:'gpt-4.1'})
   const [goal,setGoal]=useState('')
   const [busy,setBusy]=useState(false)
+  const [phase,setPhase]=useState<AgentPhase>('stopped')
   const [editing,setEditing]=useState(false)
   const [configReady,setConfigReady]=useState(false)
   const [status,setStatus]=useState('')
-  const [turns,setTurns]=useState<{goal:string;answer:string}[]>([])
+  const [turns,setTurns]=useState<AgentTurn[]>([])
   const [activeGoal,setActiveGoal]=useState('')
   const [error,setError]=useState('')
   const [saving,setSaving]=useState(false)
   const [showKey,setShowKey]=useState(false)
   const [copied,setCopied]=useState<number|null>(null)
   const [closePrompt,setClosePrompt]=useState(false)
+  const [controlPending,setControlPending]=useState(false)
+  const [stopPending,setStopPending]=useState(false)
+  const [steps,setSteps]=useState<AgentStep[]>([])
+  const [artifacts,setArtifacts]=useState<AgentArtifact[]>([])
+  const [approval,setApproval]=useState<AgentApproval|null>(null)
+  const [handoff,setHandoff]=useState<AgentHandoff|null>(null)
   const scrollRef=useRef<HTMLDivElement>(null)
-  const lastTurnCount=useRef(0)
+  const dialogRef=useRef<HTMLDivElement>(null)
+  const lastTurnId=useRef<string|undefined>(undefined)
+  const runSequence=useRef(0)
   const lastActiveGoal=useRef('')
-  const {height,dragging,isFull,expand,onPointerDown,onPointerMove,onPointerEnd,snapTo,limits}=useAgentSheet(sheetRef)
-  const [activity,setActivity]=useState<string[]>([])
-  const [approval,setApproval]=useState<string|null>(null)
+  const live=useRef(true)
+  const stepsRef=useRef<AgentStep[]>([])
+  const artifactsRef=useRef<AgentArtifact[]>([])
+  const outcome=useRef<RunOutcome>('stopped')
+  const activeRun=useRef<{id:string;goal:string;detail?:string;configError?:boolean}|null>(null)
   const approvalResolve=useRef<((approved:boolean)=>void)|null>(null)
+  const handoffResolve=useRef<((choice:'continue'|'stop')=>void)|null>(null)
   const controller=useRef<AbortController|null>(null)
+  const runtimeRef=useRef<BrowserAgentRuntime|null>(null)
+  const stopping=useRef<{runtime:BrowserAgentRuntime;promise:Promise<void>}|null>(null)
+  const committedMinimized=useRef(minimized)
+  const pageExposureWaiters=useRef(new Set<()=>void>())
+  const {height,dragging,isFull,expand,onPointerDown,onPointerMove,onPointerEnd,snapTo,limits}=useAgentSheet(sheetRef)
 
+  useLayoutEffect(()=>{
+    committedMinimized.current=minimized
+    if(minimized)pageExposureWaiters.current.forEach(resolve=>resolve())
+  },[minimized])
   useEffect(()=>{
     let mounted=true
     void loadAgentConfig().then(value=>{if(mounted)setConfig(value)})
-      .catch(error=>{if(mounted)setStatus(String(error))})
+      .catch(failure=>{if(mounted)setStatus(failure instanceof Error?failure.message:String(failure))})
       .finally(()=>{if(mounted)setConfigReady(true)})
     return ()=>{mounted=false}
   },[])
-  useEffect(()=>()=>{controller.current?.abort();approvalResolve.current?.(false)},[])
+  useEffect(()=>{
+    live.current=true
+    return ()=>{
+      live.current=false
+      controller.current?.abort()
+      approvalResolve.current?.(false)
+      handoffResolve.current?.('stop')
+      const runtime=runtimeRef.current
+      if(runtime)void stopRuntime(runtime).catch(()=>undefined)
+    }
+  },[])
   useEffect(()=>onBusyChange(busy),[busy,onBusyChange])
+  const operating=busy&&phase==='running'&&!approval&&!closePrompt
+  useEffect(()=>{
+    onOperatingChange?.(operating)
+    return ()=>onOperatingChange?.(false)
+  },[operating,onOperatingChange])
   useEffect(()=>{
     const transcript=scrollRef.current
-    const newTurn=turns.length>lastTurnCount.current
-    const newGoal=Boolean(activeGoal && lastActiveGoal.current!==activeGoal)
-    lastTurnCount.current=turns.length
+    const latestTurnId=turns[turns.length-1]?.id
+    const newTurn=Boolean(latestTurnId&&latestTurnId!==lastTurnId.current)
+    const newGoal=Boolean(activeGoal&&lastActiveGoal.current!==activeGoal)
+    lastTurnId.current=latestTurnId
     lastActiveGoal.current=activeGoal
-    if(!transcript||minimized)return
+    if(!transcript||minimized||handoff)return
     if(newTurn){
-      // Start at the beginning of the latest Markdown answer, not its ending.
       const entries=transcript.querySelectorAll<HTMLElement>('[data-agent-turn]')
       const target=entries[entries.length-1]
       if(target){
@@ -107,203 +205,275 @@ export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNe
     }else if(newGoal||((busy||activeGoal)&&transcript.scrollHeight-transcript.scrollTop-transcript.clientHeight<145)){
       transcript.scrollTop=transcript.scrollHeight
     }
-  },[turns,activeGoal,activity,status,minimized,busy])
-
-  const stop=()=>{
-    controller.current?.abort()
-    approvalResolve.current?.(false)
-    controller.current=null
-    setBusy(false)
-    setActiveGoal('')
-    setStatus('已停止')
-  }
-  const pauseForConfirmation=(reason:string,signal:AbortSignal)=>new Promise<void>((resolve,reject)=>{
-    if(signal.aborted){reject(abortError());return}
-    const done=(approved:boolean)=>{
-      signal.removeEventListener('abort',onAbort)
-      approvalResolve.current=null
-      setApproval(null)
-      if(approved&&!signal.aborted)resolve()
-      else reject(new Error('用户拒绝了该操作'))
+  },[turns,activeGoal,steps,status,minimized,busy,handoff,artifacts])
+  useEffect(()=>{
+    if(!handoff||minimized)return
+    const transcript=scrollRef.current,sheet=sheetRef.current
+    let active=true
+    const reveal=()=>{
+      const target=transcript?.querySelector<HTMLElement>('[data-agent-handoff]')
+      if(transcript&&target)transcript.scrollTop=Math.max(0,target.getBoundingClientRect().top-transcript.getBoundingClientRect().top+transcript.scrollTop-12)
     }
-    const onAbort=()=>done(false)
-    approvalResolve.current=done
-    signal.addEventListener('abort',onAbort,{once:true})
+    const fit=()=>{
+      if(!active)return
+      const target=transcript?.querySelector<HTMLElement>('[data-agent-handoff]')
+      if(transcript&&sheet&&target){
+        const controlsHeight=sheet.getBoundingClientRect().height-transcript.getBoundingClientRect().height
+        const readableHeight=controlsHeight+target.getBoundingClientRect().height+24
+        snapTo(Math.max(limits().min,Math.ceil(readableHeight)))
+      }
+      reveal()
+    }
+    const frame=requestAnimationFrame(fit)
+    void document.fonts?.ready.then(fit)
+    sheet?.addEventListener('transitionend',reveal)
+    return ()=>{active=false;cancelAnimationFrame(frame);sheet?.removeEventListener('transitionend',reveal)}
+  },[handoff,minimized,sheetRef,snapTo,limits])
+  useEffect(()=>{
+    if((!approval&&!closePrompt)||minimized)return
+    const previous=document.activeElement instanceof HTMLElement?document.activeElement:null
+    const dialog=dialogRef.current
+    const sheet=sheetRef.current
+    const focus=()=>{(dialog?.querySelector<HTMLButtonElement>('button:not(:disabled)')||dialog)?.focus()}
+    const frame=requestAnimationFrame(focus)
+    const keydown=(event:globalThis.KeyboardEvent)=>{
+      if(event.key==='Escape'){
+        event.preventDefault();event.stopPropagation()
+        if(stopPending)return
+        if(approval)approvalResolve.current?.(false)
+        else setClosePrompt(false)
+      }else if(event.key==='Tab'){
+        const buttons=Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')||[])
+        if(!buttons.length){event.preventDefault();return}
+        const first=buttons[0],last=buttons[buttons.length-1]
+        if(event.shiftKey&&(document.activeElement===first||!dialog?.contains(document.activeElement))){event.preventDefault();last.focus()}
+        else if(!event.shiftKey&&(document.activeElement===last||!dialog?.contains(document.activeElement))){event.preventDefault();first.focus()}
+      }
+    }
+    document.addEventListener('keydown',keydown,true)
+    return ()=>{
+      cancelAnimationFrame(frame)
+      document.removeEventListener('keydown',keydown,true)
+      if(previous?.isConnected&&!sheet?.hidden)previous.focus()
+    }
+  },[approval,closePrompt,minimized,stopPending,sheetRef])
+
+  function stopRuntime(runtime:BrowserAgentRuntime):Promise<void>{
+    if(stopping.current?.runtime===runtime)return stopping.current.promise
+    const promise=Promise.resolve().then(()=>runtime.stop()).catch(failure=>{
+      if(stopping.current?.promise===promise)stopping.current=null
+      throw failure
+    })
+    stopping.current={runtime,promise}
+    return promise
+  }
+  const isCurrent=(abort:AbortController)=>live.current&&controller.current===abort
+  const exposePage=(abort:AbortController):Promise<void>=>{
+    if(!isCurrent(abort)||abort.signal.aborted)return Promise.reject(new DOMException('任务已停止','AbortError'))
+    if(committedMinimized.current)return Promise.resolve()
+    return new Promise<void>((resolve,reject)=>{
+      let settled=false
+      const finish=(cancelled=false)=>{
+        if(settled)return
+        settled=true
+        pageExposureWaiters.current.delete(ready)
+        abort.signal.removeEventListener('abort',cancel)
+        if(cancelled)reject(new DOMException('任务已停止','AbortError'))
+        else resolve()
+      }
+      const ready=()=>finish()
+      const cancel=()=>finish(true)
+      pageExposureWaiters.current.add(ready)
+      abort.signal.addEventListener('abort',cancel,{once:true})
+      // The runtime checks native bounds after this React commit before dispatching input.
+      onMinimize()
+    })
+  }
+  const releaseRun=(abort:AbortController)=>{
+    if(controller.current!==abort)return
+    const record=activeRun.current
+    if(live.current&&record&&outcome.current!=='completed'){
+      const retainedSteps:AgentStep[]=stepsRef.current.map(step=>step.status==='running'
+        ?{...step,status:'cancelled',outcome:step.outcome||'unknown',detail:step.detail||'未收到最终操作结果'}:step)
+      const turn:AgentTurn={id:record.id,goal:record.goal,detail:record.detail,status:outcome.current==='failed'?'failed':'stopped',steps:retainedSteps,artifacts:artifactsRef.current}
+      setTurns(previous=>[...previous.filter(item=>item.id!==record.id).slice(-7),turn])
+      setActiveGoal('')
+    }
+    activeRun.current=null
+    controller.current=null;runtimeRef.current=null;stopping.current=null
+    if(!live.current)return
+    setBusy(false);setPhase('stopped');setControlPending(false);setStopPending(false)
+    setApproval(null);setHandoff(null)
+    if(!record?.configError)setError('')
+    if(outcome.current==='completed')setStatus('已完成')
+    else if(outcome.current==='stopped')setStatus('已停止')
     onNeedAttention()
-    setApproval(reason)
+  }
+  const stop=async():Promise<boolean>=>{
+    const abort=controller.current
+    if(!abort)return true
+    if(outcome.current==='running')outcome.current='stopped'
+    setPhase('stopping');setStopPending(true);setError('')
+    abort.abort()
+    approvalResolve.current?.(false)
+    handoffResolve.current?.('stop')
+    try{
+      const runtime=runtimeRef.current
+      if(runtime)await stopRuntime(runtime)
+      releaseRun(abort)
+      return true
+    }catch{
+      if(isCurrent(abort)){
+        setStopPending(false);setError('尚未确认任务停止，请重试停止。');setStatus('停止尚未确认')
+        onNeedAttention()
+      }
+      return false
+    }
+  }
+  const pause=async(takeover=false)=>{
+    const abort=controller.current,runtime=runtimeRef.current
+    if(!abort||!runtime||abort.signal.aborted||controlPending)return
+    setControlPending(true);setError('');setPhase('pausing')
+    try{
+      await runtime.pause()
+      if(!isCurrent(abort)||abort.signal.aborted)return
+      if(takeover){
+        const current=tabs.find(tab=>tab.active)
+        setHandoff({id:'manual-'+Date.now(),kind:'manual',reason:'完成网页操作后，点击继续任务。',tabId:current?.id,url:current?.url,title:current?.title})
+        setPhase('handoff');snapTo(limits().min)
+      }else setPhase('paused')
+    }catch(failure){
+      if(isCurrent(abort)&&!abort.signal.aborted)setError(failure instanceof Error?failure.message:'暂停失败，请重试')
+    }finally{if(isCurrent(abort))setControlPending(false)}
+  }
+  const resume=async()=>{
+    const abort=controller.current,runtime=runtimeRef.current
+    if(!abort||!runtime||abort.signal.aborted||controlPending)return
+    setControlPending(true);setError('');setPhase('resuming')
+    if(handoffResolve.current){handoffResolve.current('continue');return}
+    try{
+      await runtime.resume()
+      if(isCurrent(abort)&&!abort.signal.aborted){setHandoff(null);setPhase('running')}
+    }catch(failure){
+      if(isCurrent(abort)&&!abort.signal.aborted){setPhase(handoff?'handoff':'paused');setError(failure instanceof Error?failure.message:'恢复失败，请重试')}
+    }finally{if(isCurrent(abort))setControlPending(false)}
+  }
+  const requestApproval=(request:AgentApproval,signal:AbortSignal,abort:AbortController)=>new Promise<boolean>(resolve=>{
+    if(signal.aborted||!isCurrent(abort)){resolve(false);return}
+    approvalResolve.current?.(false)
+    let settled=false
+    const done=(approved:boolean)=>{
+      if(settled)return
+      settled=true
+      signal.removeEventListener('abort',cancel)
+      if(approvalResolve.current===done)approvalResolve.current=null
+      if(isCurrent(abort))setApproval(null)
+      resolve(approved&&!signal.aborted)
+    }
+    const cancel=()=>done(false)
+    approvalResolve.current=done
+    signal.addEventListener('abort',cancel,{once:true})
+    setApproval(request);onNeedAttention()
   })
-  const sleep=(time:number,signal:AbortSignal)=>new Promise<void>((resolve,reject)=>{
-    if(signal.aborted){reject(abortError());return}
-    const onAbort=()=>{clearTimeout(timer);reject(abortError())}
-    const timer=window.setTimeout(()=>{signal.removeEventListener('abort',onAbort);resolve()},time)
-    signal.addEventListener('abort',onAbort,{once:true})
+  const requestHandoff=(request:AgentHandoff,signal:AbortSignal,abort:AbortController)=>new Promise<'continue'|'stop'>(resolve=>{
+    if(signal.aborted||!isCurrent(abort)){resolve('stop');return}
+    handoffResolve.current?.('stop')
+    let settled=false
+    const done=(choice:'continue'|'stop')=>{
+      if(settled)return
+      settled=true
+      signal.removeEventListener('abort',cancel)
+      if(handoffResolve.current===done)handoffResolve.current=null
+      resolve(signal.aborted?'stop':choice)
+    }
+    const cancel=()=>done('stop')
+    handoffResolve.current=done
+    signal.addEventListener('abort',cancel,{once:true})
+    setHandoff(request);setPhase('handoff');setControlPending(false)
+    onNeedAttention();snapTo(limits().min)
   })
 
   const run=async()=>{
     if(controller.current)return
     if(!goal.trim()){setStatus('请输入你想完成的任务');return}
-    const request=goal.trim()
-    const abort=new AbortController()
-    controller.current=abort
-    setBusy(true);setError('');setActiveGoal(request);setActivity([]);setStatus('正在准备…')
+    const request=goal.trim(),abort=new AbortController(),turnId='run-'+(++runSequence.current)
+    controller.current=abort;outcome.current='running';stepsRef.current=[];artifactsRef.current=[]
+    activeRun.current={id:turnId,goal:request}
+    setBusy(true);setPhase('running');setError('');setActiveGoal(request);setSteps([]);setArtifacts([])
+    setHandoff(null);setApproval(null);setCopied(null);setStatus('正在准备…')
+    let runtime:BrowserAgentRuntime|null=null
     try{
       const runtimeConfig=await loadAgentConfig()
-      if(abort.signal.aborted)throw abortError()
+      if(abort.signal.aborted)throw new DOMException('任务已停止','AbortError')
       if(!runtimeConfig.apiKey||!runtimeConfig.model||!runtimeConfig.endpoint){
+        if(activeRun.current)activeRun.current.configError=true
         setEditing(true)
         throw new Error('请先保存 API 地址、模型和密钥')
       }
-      let lastPage:AgentObservation|null=null
-      let lastShot:AgentScreenshot|null=null
-      let shotPage:string|null=null
-      const observe=async(waitForPage=false):Promise<{page:AgentObservation|null;tabs:AgentTab[];status?:string}>=>{
-        for(let attempt=0;attempt<72;attempt++){
-          if(abort.signal.aborted)throw abortError()
-          const snapshot=await browserAgentState()
-          if(!snapshot.state.tabId){
-            if(!waitForPage)return {page:null,tabs:snapshot.tabs,status:'尚未打开网页，可直接搜索或打开网址'}
-          }else if(snapshot.state.error){
-            if(!waitForPage)throw new Error(snapshot.state.error)
-          }else if(!snapshot.state.loading && (snapshot.state.progress??0)>=100){
-            try{
-              const page=await browserAgentAction({action:'observe',tabId:snapshot.state.tabId}) as unknown as AgentObservation
-              if(abort.signal.aborted)throw abortError()
-              lastPage=page;lastShot=null;shotPage=null
-              return {page,tabs:snapshot.tabs}
-            }catch(error){if(attempt>=71)throw error}
-          }
-          await sleep(350,abort.signal)
-        }
-        throw new Error('网页加载超时，请检查网络连接或网站是否可访问')
-      }
-      const freshPage=async():Promise<unknown>=>observe(true)
-      const executeElement=async(name:'click'|'type'|'choose'|'submit'|'scroll',args:AgentToolArguments):Promise<unknown>=>{
-        if(!lastPage){await observe(true)}
-        const page=lastPage!
-        const id=name==='scroll'?undefined:elementId(args)
-        if(id!==undefined&&!page.elements.some(item=>item.id===id))throw new Error('元素不存在，请重新观察网页')
-        if(name==='click'||name==='submit'){
-          const reason=agentApprovalReason({action:name,id},page)
-          if(reason)await pauseForConfirmation(reason,abort.signal)
-        }
-        const text=name==='type'||name==='choose'?textArg(args.text):undefined
-        const direction=name==='scroll'?(args.direction==='up'?'up':'down'):undefined
-        if(abort.signal.aborted)throw abortError()
-        const state=await browserAgentState()
-        if(!state.state.tabId)throw new Error('浏览器已关闭')
-        const result=await browserAgentAction({action:name,tabId:state.state.tabId,id,text,direction,snapshot:page.snapshot})
-        if(abort.signal.aborted)throw abortError()
-        await sleep(name==='type'?220:400,abort.signal)
-        return {operation:result,observation:await freshPage()}
-      }
-      const runtime:ReActRuntime={
-        onActivity:message=>setStatus(LABELS[message as AgentToolName]||message),
-        performTool:async(name,args,signal):Promise<AgentToolResult>=>{
-          if(signal.aborted)throw abortError()
-          setStatus(LABELS[name]||'AI 正在操作网页')
-          setActivity(previous=>[...previous.slice(-4),LABELS[name]||name])
-          const finish=(result:unknown,screenshot?:AgentScreenshot):AgentToolResult=>({result,screenshot})
-          switch(name){
-            case 'browser_search':{
-              const query=textArg(args.query)
-              if(!await onSearch(query))throw new Error('搜索页面打开失败')
-              lastPage=null;lastShot=null
-              return finish({query,observation:await freshPage()})
-            }
-            case 'browser_open_url':{
-              const url=httpUrl(args.url)
-              if(!await onNavigate(url))throw new Error('网页打开失败')
-              lastPage=null;lastShot=null
-              return finish({url,observation:await freshPage()})
-            }
-            case 'browser_observe': return finish(await observe())
-            case 'browser_click':return finish(await executeElement('click',args))
-            case 'browser_type':return finish(await executeElement('type',args))
-            case 'browser_choose':return finish(await executeElement('choose',args))
-            case 'browser_submit':return finish(await executeElement('submit',args))
-            case 'browser_scroll':return finish(await executeElement('scroll',args))
-            case 'browser_back':
-              if(!await onBack())throw new Error('无法返回')
-              lastPage=null;lastShot=null
-              return finish(await freshPage())
-            case 'browser_forward':
-              if(!await onForward())throw new Error('无法前进')
-              lastPage=null;lastShot=null
-              return finish(await freshPage())
-            case 'browser_tabs':{
-              const snapshot=await browserAgentState()
-              return finish(snapshot)
-            }
-            case 'browser_new_tab':{
-              const url=httpUrl(args.url)
-              if(!await onNewTab(url))throw new Error('无法创建标签页')
-              lastPage=null;lastShot=null
-              return finish(await freshPage())
-            }
-            case 'browser_switch_tab':{
-              if(!Number.isInteger(args.index))throw new Error('无效标签页序号')
-              if(!await onSwitchTab(args.index as number))throw new Error('无法切换标签页')
-              lastPage=null;lastShot=null
-              return finish(await freshPage())
-            }
-            case 'browser_close_tab':{
-              if(!Number.isInteger(args.index))throw new Error('无效标签页序号')
-              const reason=agentApprovalReason({action:'close_tab',index:args.index as number},lastPage||{url:'',title:'',snapshot:'',text:'',elements:[],viewport:{width:0,height:0}})
-              if(reason)await pauseForConfirmation(reason,signal)
-              if(!await onCloseTab(args.index as number))throw new Error('无法关闭标签页')
-              lastPage=null;lastShot=null
-              return finish(await observe())
-            }
-            case 'browser_screenshot':{
-              if(!lastPage)await observe(true)
-              const state=await browserAgentState()
-              if(!state.state.tabId)throw new Error('当前没有可截图的网页')
-              const shot=await browserAgentAction({action:'screenshot',tabId:state.state.tabId}) as unknown as AgentScreenshot
-              if(!shot.image||!shot.width||!shot.height)throw new Error('浏览器截图无效')
-              lastShot=shot;shotPage=lastPage?.snapshot||null
-              return finish({width:shot.width,height:shot.height,page:lastPage?.url},shot)
-            }
-            case 'browser_tap':{
-              if(!lastShot||!lastPage||shotPage!==lastPage.snapshot)throw new Error('请先获取当前页面截图')
-              if(typeof args.x!=='number'||typeof args.y!=='number'||!Number.isInteger(args.x)||!Number.isInteger(args.y))throw new Error('坐标必须是截图像素')
-              const x=Math.round(args.x*lastShot.viewWidth/lastShot.width)
-              const y=Math.round(args.y*lastShot.viewHeight/lastShot.height)
-              if(x<0||y<0||x>=lastShot.viewWidth||y>=lastShot.viewHeight)throw new Error('坐标超出截图范围')
-              const cssX=args.x*lastPage.viewport.width/lastShot.width
-              const cssY=args.y*lastPage.viewport.height/lastShot.height
-              const closest=lastPage.elements.map(item=>({item,dist:Math.hypot(item.x-cssX,item.y-cssY)})).sort((a,b)=>a.dist-b.dist)[0]
-              if(closest&&closest.dist<42){
-                const reason=agentApprovalReason({action:'click',id:closest.item.id},lastPage)
-                if(reason)await pauseForConfirmation(reason,signal)
-              }else{
-                await pauseForConfirmation('即将点击无法识别的网页区域，请确认',signal)
-              }
-              const state=await browserAgentState()
-              if(!state.state.tabId)throw new Error('当前没有网页')
-              const response=await browserAgentAction({action:'tap',tabId:state.state.tabId,x,y,snapshot:lastPage.snapshot})
-              lastShot=null;shotPage=null
-              await sleep(450,signal)
-              return finish({operation:response,observation:await freshPage()})
-            }
+      runtime=createBrowserAgentRuntime({
+        signal:abort.signal,onSearch,onNavigate,searchUrl,
+        onExposePage:()=>exposePage(abort),
+        onApproval:(request,signal)=>requestApproval(request,signal,abort),
+        onHandoff:(request,signal)=>requestHandoff(request,signal,abort),
+        onStep:step=>{
+          if(!isCurrent(abort))return
+          const index=stepsRef.current.findIndex(item=>item.id===step.id)
+          const next=index<0?[...stepsRef.current,step]:stepsRef.current.map(item=>item.id===step.id?step:item)
+          stepsRef.current=next;setSteps(next)
+          setTurns(previous=>previous.map(turn=>turn.id===turnId?{...turn,steps:next}:turn))
+        },
+        onPhase:next=>{
+          if(!isCurrent(abort)||(abort.signal.aborted&&next!=='stopping'&&next!=='stopped'))return
+          setPhase(next)
+          if(next==='running'){setHandoff(null);setControlPending(false)}
+          else if(next==='paused'||next==='handoff'){
+            setControlPending(false)
+            if(next==='paused')onNeedAttention()
           }
         },
+        onControlError:message=>{
+          if(isCurrent(abort)&&!abort.signal.aborted){setError(message);onNeedAttention()}
+        },
+        onArtifacts:next=>{
+          if(!isCurrent(abort))return
+          artifactsRef.current=next;setArtifacts(next)
+          setTurns(previous=>previous.map(turn=>turn.id===turnId?{...turn,artifacts:next}:turn))
+        },
+      })
+      runtimeRef.current=runtime
+      const onActivity=runtime.onActivity
+      runtime.onActivity=message=>{
+        onActivity?.(message)
+        if(isCurrent(abort)&&!abort.signal.aborted)setStatus(LABELS[message as AgentToolName]||(message.startsWith('browser_')?'正在操作网页':message))
       }
-      const initial=await browserAgentState()
-      const result=await runReActAgent(runtimeConfig,request,{...initial,uiTabId:tabId,
-        previousTurns:turns.slice(-3).map(turn=>({goal:turn.goal,answer:turn.answer.slice(0,1600)}))},runtime,abort.signal)
-      if(abort.signal.aborted)throw abortError()
-      setTurns(previous=>[...previous.slice(-7),{goal:request,answer:result}])
-      setGoal('')
-      setActiveGoal('')
-      setStatus('已完成')
+      const initial=await runtime.start()
+      const result=await runReActAgent(runtimeConfig,request,{browser:initial,uiTabId:tabId,
+        previousTurns:turns.slice(-3).map(turn=>({goal:turn.goal,status:turn.status,answer:turn.answer?.slice(0,1600),detail:turn.detail?.slice(0,300),
+          steps:turn.steps.map(step=>({tool:step.tool,status:step.status,outcome:step.outcome,detail:step.outcome==='unknown'||step.status==='failed'?step.detail?.slice(0,200):undefined})),
+          files:turn.artifacts.map(file=>({fileId:file.fileId,name:file.name,mime:file.mime,size:file.size,status:file.status})),
+        }))},runtime,abort.signal)
+      if(abort.signal.aborted)throw new DOMException('任务已停止','AbortError')
+      if(isCurrent(abort)){
+        outcome.current='completed'
+        setTurns(previous=>[...previous.slice(-7),{id:turnId,goal:request,status:'completed',answer:result,steps:stepsRef.current,artifacts:artifactsRef.current}])
+        setGoal('');setActiveGoal('');setStatus('正在结束任务')
+      }
     }catch(failure){
-      if(!abort.signal.aborted){
+      if(isCurrent(abort)&&!abort.signal.aborted){
+        outcome.current='failed'
         const message=failure instanceof Error?failure.message:'浏览任务失败'
-        setError(message);setStatus(message);setActiveGoal('')
+        if(activeRun.current)activeRun.current.detail=message
+        setError(message);setStatus('任务未完成')
       }
-    }finally{if(controller.current===abort){controller.current=null;setBusy(false)}}
+    }finally{
+      try{
+        if(runtime)await stopRuntime(runtime)
+        releaseRun(abort)
+      }catch{
+        if(isCurrent(abort)){setPhase('stopping');setStopPending(false);setError('尚未确认任务停止，请重试停止。');setStatus('停止尚未确认');onNeedAttention()}
+      }
+    }
   }
-
   const save=async()=>{
     if(saving)return
     setSaving(true);setError('')
@@ -316,19 +486,17 @@ export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNe
     catch{setError('无法复制内容，请重试')}
   }
   const keyDown=(event:KeyboardEvent<HTMLTextAreaElement>)=>{
-    if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){
-      event.preventDefault()
-      void run()
-    }
+    if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();void run()}
   }
-  const requestClose=()=>{
-    if(busy){setClosePrompt(true);return}
-    onClose()
-  }
+  const requestClose=()=>{if(busy){setClosePrompt(true);return}onClose()}
+  const canResume=phase==='paused'||phase==='handoff'
+  const phaseText=phaseLabel(phase,outcome.current==='completed')
+  const confirmationOpen=Boolean(approval||closePrompt)
 
   return <section ref={sheetRef} aria-label="AI 浏览助手" role="region" hidden={minimized}
     data-agent-sheet data-dragging={dragging?'true':'false'} data-fullscreen={isFull?'true':'false'}
     className="agent-sheet" style={{height:height+'px',maxHeight:'calc(100dvh - var(--sat))'}}>
+    <div className="contents" inert={confirmationOpen} aria-hidden={confirmationOpen||undefined}>
     <div role="separator" tabIndex={0} aria-label="拖动调整 AI 面板高度" aria-orientation="horizontal"
       aria-valuenow={Math.round(height)} aria-valuemin={limits().min} aria-valuemax={limits().max}
       className="agent-grip-area shrink-0" onPointerDown={onPointerDown} onPointerMove={onPointerMove}
@@ -341,20 +509,23 @@ export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNe
       }}>
       <span className="agent-grip"/>
     </div>
-    <header className="flex min-h-[51px] shrink-0 items-center gap-2 border-b border-haze/70 px-4 pb-2">
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-[13px] bg-haze/70 text-paper"><Bot size={20} strokeWidth={1.75}/></span>
+    <header className="agent-header flex shrink-0 items-center gap-2"
+      onPointerDown={event=>{if(!(event.target as Element).closest('button'))onPointerDown(event)}}
+      onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd}
+      onDoubleClick={event=>{if(!(event.target as Element).closest('button'))expand()}}>
+      <span className="agent-header-mark flex size-8 shrink-0 items-center justify-center rounded-xl"><Bot size={18} strokeWidth={1.75} aria-hidden="true"/></span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2"><h2 className="truncate text-[15px] font-semibold tracking-[-.015em]">AI 浏览助手</h2>
-          {busy&&<LoaderCircle size={14} className="shrink-0 animate-spin text-cinnabar" aria-hidden="true"/>}</div>
-        <p className="truncate text-[11.5px] leading-[1.4] text-paper-muted">{editing?'模型与连接设置':busy?'正在执行任务':tabs.length?tabs.find(tab=>tab.active)?.title||'浏览器': '随时开始浏览任务'}</p>
+          {busy&&(canResume?phase==='handoff'?<Hand size={14} className="shrink-0 text-paper-muted" aria-hidden="true"/>:<Pause size={14} className="shrink-0 text-paper-muted" aria-hidden="true"/>:<LoaderCircle size={14} className="shrink-0 animate-spin text-cinnabar" aria-hidden="true"/>)}</div>
+        <p className="truncate text-[12px] leading-[1.4] text-paper-muted">{editing?'模型与连接设置':tabs.length?'当前网页 · '+(tabs.find(tab=>tab.active)?.title||'浏览器'): '随时开始浏览任务'}</p>
       </div>
       <div className="flex shrink-0 items-center gap-0.5">
         <button type="button" aria-label={editing?'返回任务':'API 设置'} aria-pressed={editing} disabled={busy&&!editing||!configReady}
-          className="agent-icon-button" onClick={()=>{setError('');setEditing(value=>!value)}}><Settings2 size={19}/></button>
+          className="agent-icon-button agent-settings-toggle" onClick={()=>{setError('');setEditing(value=>!value)}}><Settings2 size={19}/></button>
         <button type="button" aria-label={isFull?'恢复半屏':'展开全屏'} aria-pressed={isFull} className="agent-icon-button" onClick={expand}>
           {isFull?<Minimize2 size={19}/>:<Maximize2 size={19}/>}</button>
         <button type="button" aria-label="收起 AI 面板" className="agent-icon-button" onClick={onMinimize}><ChevronDown size={21}/></button>
-        <button type="button" aria-label="关闭 AI 浏览助手" className="agent-icon-button" onClick={requestClose}><X size={20}/></button>
+        <button type="button" aria-label="关闭 AI 浏览助手" className="agent-icon-button agent-close" onClick={requestClose}><X size={20}/></button>
       </div>
     </header>
     {editing?<div className="agent-transcript px-5 py-5" data-agent-settings>
@@ -378,56 +549,84 @@ export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNe
       </form>
     </div>:<>
       <div ref={scrollRef} className="agent-transcript" data-agent-transcript>
-        {turns.length===0&&!activeGoal&&<div className="px-5 pb-6 pt-8">
-          <span className="mb-4 flex size-12 items-center justify-center rounded-2xl bg-haze/70 text-paper"><Bot size={26} strokeWidth={1.5}/></span>
-          <h3 className="text-[21px] font-semibold tracking-[-.035em] leading-tight">一句话，交给 AI 浏览</h3>
-          <p className="mt-2 max-w-[320px] text-[14px] leading-[1.7] text-paper-muted">自动搜索、浏览与整理结果，也可以操作当前网页。</p>
-          <div className="mt-5 flex flex-wrap gap-2">
-            {(tabId?[ '总结当前网页', '查找相关资料' ]:[ '搜索今日科技资讯', '查找某个网站' ]).map(suggestion=><button type="button" key={suggestion} onClick={()=>setGoal(suggestion)} className="rounded-full border border-haze px-3.5 py-2 text-[13px] text-paper-muted transition-colors active:bg-haze">{suggestion}</button>)}
+        {turns.length===0&&!activeGoal&&<div className="px-5 pb-6 pt-7">
+          <h3 className="text-[20px] font-semibold tracking-[-.025em] leading-snug">浏览任务</h3>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {(tabId?['总结当前网页','查找相关资料']:['搜索今日科技资讯','查找某个网站']).map(suggestion=><button type="button" key={suggestion} onClick={()=>setGoal(suggestion)} className="rounded-full border border-haze px-3.5 py-2 text-[13px] text-paper-muted transition-colors active:bg-haze">{suggestion}</button>)}
           </div>
         </div>}
-        {turns.map((turn,index)=><div key={index} data-agent-turn className="px-5 pt-5">
+        {turns.map((turn,index)=><div key={turn.id} data-agent-turn data-agent-turn-status={turn.status} className="px-5 pt-5">
           <div className="ml-auto max-w-[92%] rounded-2xl rounded-tr-md bg-haze/70 px-3.5 py-3 text-[14px] leading-relaxed text-paper">{turn.goal}</div>
           <div className="mt-5 pb-2">
-            <div className="mb-3 flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-[12px] font-semibold text-paper-muted"><Bot size={15}/>浏览结果</span>
-              <button type="button" aria-label="复制 AI 回答" className="agent-icon-button !size-8" onClick={()=>{void copyResult(index,turn.answer)}}>
-                {copied===index?<CheckCheck size={16}/>:<Copy size={16}/>}</button></div>
-            <AgentMarkdown markdown={turn.answer} onNavigate={onNavigate}/>
+            <div className="mb-3 flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-[12px] font-semibold text-paper-muted">{turn.status==='completed'?<Bot size={15}/>:turn.status==='failed'?<AlertCircle size={15}/>:<CircleMinus size={15}/>}<span>{turnLabel(turn)}</span></span>
+              {turn.answer&&<button type="button" aria-label="复制 AI 回答" className="agent-icon-button" onClick={()=>{void copyResult(index,turn.answer||'')}}>
+                {copied===index?<CheckCheck size={16}/>:<Copy size={16}/>}</button>}</div>
+            {turn.answer&&<AgentMarkdown markdown={turn.answer} onNavigate={onNavigate}/>}
+            {turn.detail&&<p className="text-[13px] leading-relaxed text-paper-muted">{turn.detail}</p>}
+            {turn.steps.length>0&&<details open={turn.status!=='completed'}><summary className="agent-history-toggle"><ChevronRight size={14} aria-hidden="true"/>操作记录（{turn.steps.length}）</summary><StepList steps={turn.steps}/></details>}
+            <ArtifactList artifacts={turn.artifacts}/>
           </div>
           {index<turns.length-1&&<div className="mt-4 border-t border-haze"/>}
         </div>)}
-        {activeGoal&&<div className="px-5 pb-4 pt-5">
-          <div className="ml-auto max-w-[92%] rounded-2xl rounded-tr-md bg-haze/70 px-3.5 py-3 text-[14px] leading-relaxed text-paper">{activeGoal}</div>
-        </div>}
-        {busy&&<div className="px-5 pb-5 pt-1" data-agent-running>
-          <div className="flex items-center gap-2.5 text-[13px] font-medium"><LoaderCircle size={16} className="shrink-0 animate-spin text-cinnabar"/><span role="status" className="min-w-0 truncate">{status}</span></div>
-          {activity.length>0&&<div className="ml-[7px] mt-3 grid gap-2 border-l border-haze pl-[19px]">
-            {activity.slice(-3).map((item,index)=><p key={index} className="flex items-center gap-2 text-[12px] text-paper-muted"><CircleCheck size={13} className="shrink-0"/>{item.replace(/^正在/,'已')}</p>)}
+        {activeGoal&&<div className="px-5 pb-5 pt-5" data-agent-active-task>
+          {handoff&&<div className="agent-handoff" data-agent-handoff>
+            <h3 className="agent-handoff-title"><Hand size={17} aria-hidden="true"/>{HANDOFF_TITLES[handoff.kind]}</h3>
+            <p className="agent-handoff-reason">{handoff.reason}</p>
+            {siteName(handoff.url)&&<p className="agent-handoff-site">{siteName(handoff.url)}</p>}
           </div>}
+          <div className="ml-auto max-w-[92%] rounded-2xl rounded-tr-md bg-haze/70 px-3.5 py-3 text-[14px] leading-relaxed text-paper">{activeGoal}</div>
+          {busy&&phase==='running'&&!steps.some(step=>step.status==='running')&&<div className="mt-4 flex items-start gap-2 text-[13px] leading-relaxed" data-agent-running>
+            <LoaderCircle size={16} className="mt-0.5 shrink-0 animate-spin text-cinnabar" aria-hidden="true"/><span role="status">{status}</span>
+          </div>}
+          {steps.length>3&&<details><summary className="agent-history-toggle"><ChevronRight size={14} aria-hidden="true"/>此前步骤（{steps.length-3}）</summary><StepList steps={steps.slice(0,-3)} paused={canResume}/></details>}
+          <StepList steps={steps.slice(-3)} paused={canResume}/>
+          <ArtifactList artifacts={artifacts}/>
         </div>}
-        {!busy&&error&&<div role="alert" className="mx-5 my-4 flex items-start gap-2 rounded-xl border border-haze p-3 text-[13px] leading-relaxed text-cinnabar"><AlertCircle size={17} className="shrink-0"/>{error}</div>}
+        {error&&<div role="alert" className="mx-5 my-4 flex items-start gap-2 rounded-xl border border-haze p-3 text-[13px] leading-relaxed text-cinnabar"><AlertCircle size={17} className="shrink-0"/>{error}</div>}
       </div>
-      <div className="agent-composer px-4 pb-3 pt-3" data-agent-composer>
+      {busy?<div className="agent-task-controls" data-agent-controls data-phase={phase}>
+        <span className="agent-task-control-status" role="status">
+          {['pausing','resuming','stopping'].includes(phase)?<LoaderCircle size={15} className="shrink-0 animate-spin" aria-hidden="true"/>:phase==='handoff'?<Hand size={15} aria-hidden="true"/>:phase==='paused'?<Pause size={15} aria-hidden="true"/>:null}
+          {phaseText}
+        </span>
+        <div className="agent-task-actions">
+          {phase==='running'&&<>
+            <button type="button" className="agent-secondary" disabled={controlPending} onClick={()=>{void pause()}}><Pause size={15}/>暂停</button>
+            <button type="button" className="agent-secondary" disabled={controlPending} onClick={()=>{void pause(true)}}><Hand size={15}/>接管</button>
+          </>}
+          {canResume&&<>
+            <button type="button" className="agent-secondary" disabled={controlPending} onClick={onMinimize}>操作网页</button>
+            <button type="button" className="agent-primary" disabled={controlPending} onClick={()=>{void resume()}}><Play size={15}/>继续任务</button>
+          </>}
+          <button type="button" className="agent-icon-button" aria-label="停止任务" title="停止任务" disabled={stopPending} onClick={()=>{void stop()}}>
+            <Square size={16} fill="currentColor"/>
+          </button>
+        </div>
+      </div>:<div className="agent-composer px-4 pb-3 pt-3" data-agent-composer>
         <div className="flex items-end gap-2 rounded-[17px] border border-haze bg-ink p-1.5 pl-3">
-          <textarea aria-label="AI 浏览任务" rows={2} disabled={busy} value={goal} onChange={event=>setGoal(event.target.value)} onKeyDown={keyDown}
-            placeholder="告诉 AI 你想搜索、阅读或操作什么…" className="min-h-[44px] max-h-[120px] min-w-0 flex-1 resize-none bg-transparent px-0 py-2 text-[14px] leading-[1.55] text-paper outline-none placeholder:text-paper-faint disabled:opacity-50"/>
-          <button type="button" disabled={!configReady||(!busy&&!goal.trim())} onClick={()=>{if(busy)stop();else void run()}}
-            aria-label={busy?'停止':'开始任务'} className="agent-primary !size-10 !min-h-10 !shrink-0 !rounded-[12px] !p-0" title={busy?'停止':'开始任务'}>
-            {busy?<Square size={16} fill="currentColor"/>:<ArrowUp size={20} strokeWidth={2.5}/>}</button>
+          <textarea aria-label="AI 浏览任务" rows={2} value={goal} onChange={event=>setGoal(event.target.value)} onKeyDown={keyDown}
+            placeholder="搜索、阅读或操作网页…" className="min-h-[44px] max-h-[120px] min-w-0 flex-1 resize-none bg-transparent px-0 py-2 text-[14px] leading-[1.55] text-paper outline-none placeholder:text-paper-faint"/>
+          <button type="button" disabled={!configReady||!goal.trim()} onClick={()=>{void run()}} aria-label="开始任务"
+            className="agent-primary !size-11 !min-h-11 !shrink-0 !rounded-[12px] !p-0" title="开始任务"><ArrowUp size={20} strokeWidth={2.5}/></button>
         </div>
-        <div className="mt-2 flex items-center justify-between gap-3 px-1 text-[11.5px] leading-5 text-paper-muted">
-          <span role="status" className="min-w-0 flex-1 truncate">{!busy?status||'就绪':'AI 正在自主操作浏览器'}</span>
-          {busy&&<button type="button" onClick={stop} className="shrink-0 text-paper underline underline-offset-4">停止</button>}
-        </div>
-      </div>
+        <div className="mt-2 px-1 text-[12px] leading-5 text-paper-muted"><span role="status">{status||'就绪'}</span></div>
+      </div>}
     </>}
-    {(approval||closePrompt)&&<div className="absolute inset-0 z-30 flex items-end justify-center bg-ink/70 px-4 pb-[calc(var(--sab)+18px)]" role="presentation">
-      <div role="alertdialog" aria-label={approval?'确认 AI 网页操作':'停止并关闭 AI'} className="w-full max-w-md rounded-[19px] border border-haze bg-ink-raised p-5 shadow-xl">
-        <h3 className="text-[16px] font-semibold">{approval?'确认网页操作':'停止当前任务？'}</h3>
-        <p className="mt-2 text-[13px] leading-[1.65] text-paper-muted">{approval||'关闭后本次任务将停止。也可以先收起面板，让任务继续运行。'}</p>
+    </div>
+    {(approval||closePrompt)&&<div className="absolute inset-0 z-30 flex items-end justify-center bg-ink/40 px-4 pb-[calc(var(--sab)+18px)]" role="presentation">
+      <div ref={dialogRef} role="alertdialog" tabIndex={-1} aria-modal="true" aria-labelledby="agent-confirm-title" aria-describedby="agent-confirm-reason"
+        className="w-full max-w-md rounded-[19px] border border-haze bg-ink-raised p-5 shadow-lg">
+        <h3 id="agent-confirm-title" className="text-[16px] font-semibold">{approval?'确认网页操作':'停止当前任务？'}</h3>
+        <p id="agent-confirm-reason" className="mt-2 text-[13px] leading-[1.65] text-paper-muted">{approval?.reason||'关闭后任务将停止。收起面板可保留任务。'}</p>
+        {approval?.target&&<p className="mt-2 break-words text-[13px] leading-relaxed">{approval.target}</p>}
+        {approval&&siteName(approval.url)&&<p className="mt-1 text-[12px] text-paper-muted">{siteName(approval.url)}</p>}
+        {closePrompt&&error&&<p role="alert" className="mt-2 text-[13px] leading-relaxed text-cinnabar">{error}</p>}
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" className="agent-secondary" onClick={()=>{if(approval)approvalResolve.current?.(false);else setClosePrompt(false)}}>{approval?'拒绝':'继续任务'}</button>
-          <button type="button" className="agent-primary" onClick={()=>{if(approval)approvalResolve.current?.(true);else {stop();onClose()}}}>{approval?'允许这一步':'停止并关闭'}</button>
+          <button type="button" className="agent-secondary" disabled={stopPending} onClick={()=>{if(approval)approvalResolve.current?.(false);else setClosePrompt(false)}}>{approval?'拒绝':'返回任务'}</button>
+          <button type="button" className="agent-primary" disabled={stopPending} onClick={()=>{
+            if(approval)approvalResolve.current?.(true)
+            else void stop().then(stopped=>{if(stopped){setClosePrompt(false);onClose()}})
+          }}>{approval?'允许这一步':stopPending?'正在停止':'停止并关闭'}</button>
         </div>
       </div>
     </div>}

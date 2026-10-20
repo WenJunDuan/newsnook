@@ -45,7 +45,7 @@ interface NativeBrowser {
   tabs(): Promise<{tabs: BrowserTab[]}>
   activateTab(args: {index: number}): Promise<void>
   removeTab(args: {index: number}): Promise<void>
-  setBounds(args: {top: number; bottom: number; occludedBottom: number; visible: boolean}): Promise<void>
+  setBounds(args: {top: number; bottom: number; occludedBottom: number; visible: boolean; agentOperating: boolean}): Promise<void>
   updateScripts(args: {scripts: ReturnType<typeof loadUserScripts>}): Promise<void>
   updateSettings(args: {settings: BrowserPreferences}): Promise<void>
   getBrowserContext(): Promise<BrowserContext>
@@ -87,7 +87,7 @@ export function useBrowserSession(
   onVisit: (url: string, title: string) => void,
   bottomAddress: boolean,
   recoverySession?: BrowserRecoverySession,
-  options: {settings?: BrowserPreferences; agentSheetRef?: RefObject<HTMLElement | null>; agentSheetVisible?: boolean} = {},
+  options: {settings?: BrowserPreferences; agentSheetRef?: RefObject<HTMLElement | null>; agentSheetVisible?: boolean; agentOperating?: boolean} = {},
 ) {
   const [state, setState] = useState<BrowserState>(EMPTY)
   const [tabs, setTabs] = useState<BrowserTab[]>([])
@@ -230,9 +230,9 @@ export function useBrowserSession(
   const visible = ready && /^https?:\/\//i.test(state.url || '') && !state.error && !covered
   useLayoutEffect(() => {
     if (!ready) return
-    type Bounds = {top: number; bottom: number; occludedBottom: number; visible: boolean}
+    type Bounds = {top: number; bottom: number; occludedBottom: number; visible: boolean; agentOperating: boolean}
     const equal = (a: Bounds | null, b: Bounds) =>
-      a?.top === b.top && a.bottom === b.bottom && a.occludedBottom === b.occludedBottom && a.visible === b.visible
+      a?.top === b.top && a.bottom === b.bottom && a.occludedBottom === b.occludedBottom && a.visible === b.visible && a.agentOperating === b.agentOperating
     let stopped = false
     let sending = false
     let frame: number | null = null
@@ -259,7 +259,7 @@ export function useBrowserSession(
     const sync = () => {
       if (stopped) return
       const bounds = getBounds()
-      desired = {top: Math.round(bounds.top), bottom: Math.round(bounds.bottom), occludedBottom: Math.round(bounds.occludedBottom), visible}
+      desired = {top: Math.round(bounds.top), bottom: Math.round(bounds.bottom), occludedBottom: Math.round(bounds.occludedBottom), visible, agentOperating: Boolean(options.agentOperating)}
       flush()
     }
     const schedule = () => {
@@ -286,7 +286,7 @@ export function useBrowserSession(
       window.visualViewport?.removeEventListener('resize', schedule)
       observer?.disconnect()
     }
-  }, [ready, visible, getBounds, viewport, bottomAddress, options.agentSheetVisible, options.agentSheetRef])
+  }, [ready, visible, getBounds, viewport, bottomAddress, options.agentSheetVisible, options.agentSheetRef, options.agentOperating])
 
   const enqueue = useCallback((operation: () => Promise<void>): Promise<boolean> => {
     const generation = epoch.current

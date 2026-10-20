@@ -1,5 +1,7 @@
 /* Browser Agent follows NewsNook theme tokens; never supplies a parallel palette. */
+/* RGB alpha survives the production WebView fallback; mixing two CSS variables does not. */
 .agent-sheet {
+  --agent-chrome: linear-gradient(rgb(var(--tone-cinnabar-rgb) / .04), rgb(var(--tone-cinnabar-rgb) / .04)) var(--color-ink);
   position: absolute;
   inset-inline: 0;
   bottom: 0;
@@ -9,22 +11,41 @@
   overflow: hidden;
   min-height: 0;
   isolation: isolate;
-  border: 1px solid var(--color-haze);
+  border: 1px solid rgb(var(--tone-paper-rgb) / .18);
   border-bottom: 0;
-  border-radius: 24px 24px 0 0;
+  border-radius: 26px 26px 0 0;
   color: var(--color-paper);
   background: var(--color-ink-raised);
-  box-shadow: 0 -16px 48px color-mix(in srgb, var(--color-ink-deep) 75%, transparent);
+  box-shadow: 0 -3px 10px rgb(0 0 0 / .12), 0 -18px 48px rgb(0 0 0 / .24);
   padding-bottom: var(--sab);
   transition: height 245ms cubic-bezier(.22, 1, .36, 1), border-radius 245ms ease;
 }
 .agent-sheet[hidden] {display: none !important;}
 .agent-sheet[data-dragging='true'] {transition: none;}
-.agent-sheet[data-fullscreen='true'] {border-radius: 0;border-inline: none;}
+.agent-sheet[data-fullscreen='true'] {border-radius: 0;border: none;box-shadow: none;}
+.agent-header {
+  min-height: 48px;
+  padding: 0 12px;
+  background: var(--agent-chrome);
+  border-bottom: 1px solid rgb(var(--tone-paper-rgb) / .13);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.agent-header-mark {
+  color: var(--color-paper);
+  background: rgb(var(--tone-cinnabar-rgb) / .12);
+  border: 1px solid rgb(var(--tone-cinnabar-rgb) / .2);
+}
+.agent-header .agent-close {
+  margin-inline-start: 3px;
+  background: rgb(var(--tone-paper-rgb) / .07);
+  color: var(--color-paper);
+}
 .agent-grip-area {
   display: flex;
   width: 100%;
-  min-height: 28px;
+  min-height: 12px;
   align-items: center;
   justify-content: center;
   cursor: ns-resize;
@@ -32,21 +53,22 @@
   user-select: none;
   -webkit-user-select: none;
   outline-offset: -2px;
+  background: var(--agent-chrome);
 }
 .agent-grip {
-  width: 38px;
+  width: 44px;
   height: 4px;
   border-radius: 999px;
-  background: var(--color-paper-faint);
-  opacity: .46;
+  background: var(--color-paper-muted);
+  opacity: .65;
   transition: width 140ms ease, opacity 140ms ease;
 }
 .agent-grip-area:active .agent-grip,
 .agent-grip-area:focus-visible .agent-grip {width: 55px;opacity: .85;}
 .agent-icon-button {
   display: inline-flex;
-  height: 36px;
-  width: 36px;
+  height: 44px;
+  width: 44px;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
@@ -56,7 +78,9 @@
 }
 .agent-icon-button:active {transform: scale(.94);}
 .agent-icon-button:focus-visible,
-.agent-grip-area:focus-visible {outline: 2px solid var(--color-cinnabar);}
+.agent-grip-area:focus-visible,
+.agent-primary:focus-visible,
+.agent-secondary:focus-visible {outline: 2px solid var(--color-cinnabar);outline-offset: 2px;}
 .agent-icon-button:hover,.agent-icon-button[aria-pressed='true'] {
   background: var(--color-haze);
   color: var(--color-paper);
@@ -74,8 +98,68 @@
 .agent-composer {
   flex: none;
   border-top: 1px solid var(--color-haze);
-  background: var(--color-ink-raised);
+  background: var(--agent-chrome);
 }
+.agent-task-controls {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  border-top: 1px solid var(--color-haze);
+  background: var(--agent-chrome);
+  padding: 12px 16px;
+}
+.agent-task-control-status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-paper-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.agent-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+.agent-task-actions .agent-secondary {display: inline-flex;align-items: center;gap: 6px;}
+.agent-step-list {display: grid;gap: 12px;margin: 14px 0 0;padding: 0;list-style: none;}
+.agent-step {display: flex;min-width: 0;align-items: flex-start;gap: 10px;}
+.agent-step-icon {display: flex;width: 18px;min-height: 21px;flex: none;align-items: center;justify-content: center;color: var(--color-paper-muted);}
+.agent-step[data-state='running'] .agent-step-icon,
+.agent-step[data-state='failed'] .agent-step-icon {color: var(--color-cinnabar);}
+.agent-step[data-paused='true'] .agent-step-icon {color: var(--color-paper-muted);}
+.agent-step-copy {min-width: 0;flex: 1;font-size: 13px;line-height: 1.6;overflow-wrap: anywhere;}
+.agent-step-detail {margin: 3px 0 0;color: var(--color-paper-muted);font-size: 12.5px;line-height: 1.6;white-space: pre-wrap;}
+.agent-step[data-state='cancelled'] .agent-step-copy {color: var(--color-paper-muted);}
+.agent-handoff {
+  margin-top: 14px;
+  border: 1px solid var(--color-haze);
+  border-radius: 14px;
+  background: rgb(var(--tone-paper-rgb) / .03);
+  padding: 13px 14px;
+}
+.agent-handoff:first-child {margin-top: 0;margin-bottom: 16px;}
+.agent-handoff-title {display: flex;align-items: center;gap: 8px;font-size: 14px;font-weight: 600;line-height: 1.5;}
+.agent-handoff-reason {margin: 7px 0 0;font-size: 13px;line-height: 1.65;overflow-wrap: anywhere;}
+.agent-handoff-site {margin: 6px 0 0;color: var(--color-paper-muted);font-size: 12px;line-height: 1.5;overflow-wrap: anywhere;}
+.agent-file-list {display: grid;gap: 0;margin: 12px 0 0;padding: 0;list-style: none;}
+.agent-file {display: flex;min-width: 0;align-items: flex-start;gap: 10px;padding: 11px 0;border-bottom: 1px solid var(--color-haze);}
+.agent-file:last-child {border-bottom: 0;}
+.agent-file-icon {display: flex;width: 18px;min-height: 22px;flex: none;align-items: center;justify-content: center;color: var(--color-paper-muted);}
+.agent-file-copy {min-width: 0;flex: 1;}
+.agent-file-name {font-size: 13px;font-weight: 500;line-height: 1.6;overflow-wrap: anywhere;}
+.agent-file-detail {margin-top: 2px;color: var(--color-paper-muted);font-size: 12px;line-height: 1.55;overflow-wrap: anywhere;}
+.agent-history-toggle {display: inline-flex;min-height: 44px;align-items: center;gap: 6px;margin-top: 8px;color: var(--color-paper-muted);font-size: 12px;cursor: pointer;}
+.agent-history-toggle svg {transition: transform 150ms ease;}
+details[open] > .agent-history-toggle svg {transform: rotate(90deg);}
+.agent-history-toggle:focus-visible {outline: 2px solid var(--color-cinnabar);outline-offset: 2px;}
 .agent-field {
   width: 100%;
   min-width: 0;
@@ -94,7 +178,7 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 40px;
+  min-height: 44px;
   border-radius: 12px;
   background: var(--color-paper);
   color: var(--color-ink);
@@ -110,7 +194,7 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 12px;
   border: 1px solid var(--color-haze);
   border-radius: 12px;
@@ -118,6 +202,7 @@
   font-size: 13px;
 }
 .agent-secondary:active {background:var(--color-haze);}
+.agent-secondary:disabled {opacity: .4;}
 .agent-markdown {
   color: var(--color-paper);
   font-size: 14px;
@@ -140,7 +225,7 @@
 .agent-markdown h2 {font-size:1.16em;}
 .agent-markdown h3,.agent-markdown h4 {font-size:1.06em;}
 .agent-markdown strong {font-weight:650;}
-.agent-markdown a {color:var(--color-cinnabar-soft);text-decoration:underline;text-underline-offset:3px;text-decoration-color:color-mix(in srgb,var(--color-cinnabar) 45%,transparent);}
+.agent-markdown a {color:var(--color-paper);text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgb(var(--tone-paper-rgb) / .45);}
 .agent-markdown ul,.agent-markdown ol {margin:0 0 1em;padding-left:1.4em;}
 .agent-markdown ul {list-style:disc;}
 .agent-markdown ol {list-style:decimal;}
@@ -160,5 +245,8 @@
 .agent-markdown th {font-weight:650;background:var(--color-ink);white-space:nowrap;}
 .agent-markdown hr {margin:1.25em 0;border:0;border-top:1px solid var(--color-haze);}
 @media (prefers-reduced-motion: reduce) {
-  .agent-sheet,.agent-icon-button,.agent-primary,.agent-field,.agent-grip {transition:none!important;}
+  .agent-sheet,.agent-icon-button,.agent-primary,.agent-field,.agent-grip,.agent-history-toggle svg {transition:none!important;}
+}
+@media (max-width: 360px) {
+  .agent-header-mark,.agent-settings-toggle:disabled {display: none;}
 }

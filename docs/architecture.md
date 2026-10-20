@@ -558,6 +558,14 @@ Provider 可用性由可选的 `isAvailable()` 声明，来源选择器只显示
 
 百科设置保留原有 `newsnook.wiki.settings.v1` 键与 JSON 格式，作为历史前缀例外接入原生 Preferences 镜像和启动水合；查询面板切源也会保存默认提供商。此处不改变云同步范围。
 
+### 8.11 内置浏览器 Agent
+
+`features/browser/agent/` 将任务面板、执行运行时、模型协议分离。`BrowserAgentPanel` 只消费真实步骤、文件与接管状态；`agentRuntime.ts` 拥有暂停/恢复/停止 ACK、元素引用、审批、未知结果和完成检查；`browserAgent.ts` 负责模型 transport、工具协议以及模型所见上下文版本。手动接管、文件终态变化或恢复后的新页面必须先交给模型，不把旧编号套到新目标。
+
+Android 侧由 `BrowserAgentSession`、`BrowserAgentRuntime`、`BrowserAgentInput`、`BrowserAgentFiles` 和 `BrowserAgentDialogs` 分别负责 run 所有权、frame/截图、可信输入、文件与人工对话框，`BrowserHostPlugin` 负责 WebView 生命周期接线。动作按 run/request/tab/document 绑定，DOM 目标额外绑定 frame/document/snapshot。截图与输入前等待页面完整可见及真实布局完成；停止 ACK 后才能释放执行权。PDF 在独立隔离服务中解析，文件不向页面或模型暴露任意本地路径。
+
+原生 WebView 能力按 Provider 功能探测，密码、OTP 与网站安全挑战交给用户完成。详细能力、流程、资源预算及真实设备验收边界见 [Browser Agent](./browser-agent.md)。
+
 ## 9. HTTP、代理与网络安全
 
 | 环境 | 行为 |

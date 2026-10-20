@@ -58,6 +58,7 @@ export function BrowserWorkspace({
   const [agentOpen, setAgentOpen] = useState(false)
   const [agentMinimized, setAgentMinimized] = useState(false)
   const [agentBusy, setAgentBusy] = useState(false)
+  const [agentOperating, setAgentOperating] = useState(false)
   const agentSheetRef = useRef<HTMLElement>(null)
   const [placeAction, setPlaceAction] = useState<PlaceAction | null>(null)
   const [shortcutDraft, setShortcutDraft] = useState<ShortcutDraft | null>(null)
@@ -131,6 +132,7 @@ export function BrowserWorkspace({
   const covered = Boolean(panel || searchOpen || placeAction || shortcutDraft || confirmation || playing)
   const session = useBrowserSession(viewport, covered, recordVisit, bottomAddress, recoverySession, {
     settings: preferences, agentSheetRef, agentSheetVisible: agentOpen && !agentMinimized && !covered,
+    agentOperating: agentOpen && agentOperating,
   })
   const current = session.state.url || ''
   const clearPageFind = session.clearFind
@@ -390,7 +392,7 @@ export function BrowserWorkspace({
       <BrowserIconButton label="标签页" disabled={session.pending} onClick={() => openPanel('tabs')}>
         <span className="flex size-[18px] items-center justify-center rounded-[4px] border-[1.5px] border-current text-[10.5px] font-bold leading-none tabular-nums select-none">{session.tabs.length || 1}</span>
       </BrowserIconButton>
-      <BrowserIconButton label={agentBusy?'AI 浏览助手（运行中）':'AI 浏览助手'} onClick={() => {
+      <BrowserIconButton label={agentBusy?'AI 浏览助手（任务未结束）':'AI 浏览助手'} onClick={() => {
         setPanel(null)
         if (!agentOpen) {setAgentOpen(true);setAgentMinimized(false)}
         else setAgentMinimized(value=>!value)
@@ -443,7 +445,9 @@ export function BrowserWorkspace({
     {agentOpen && <BrowserAgentPanel tabId={session.state.tabId} loading={session.state.loading} progress={session.state.progress}
       tabs={session.tabs} sheetRef={agentSheetRef} minimized={agentMinimized} onMinimize={()=>setAgentMinimized(true)}
       onNeedAttention={()=>{setPanel(null);setSearchOpen(false);setAgentMinimized(false)}} onBusyChange={setAgentBusy}
+      onOperatingChange={setAgentOperating}
       onSearch={query=>session.open(BROWSER_ENGINES[search].url+encodeURIComponent(query))}
+      searchUrl={query=>BROWSER_ENGINES[search].url+encodeURIComponent(query)}
       onNavigate={session.open} onBack={()=>session.command('back')} onForward={()=>session.command('forward')}
       onNewTab={async url => (await session.command('new')) && (await session.open(url))}
       onSwitchTab={index => {const tab=session.tabs.find(t=>t.index===index);return tab?session.activate(tab):Promise.resolve(false)}}

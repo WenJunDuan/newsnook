@@ -4,10 +4,11 @@ import vm from 'node:vm'
 const source=readFileSync(new URL('../android/app/src/main/assets/browser-agent.js',import.meta.url),'utf8')
 let value=''
 const fields={
-  input:{tagName:'INPUT',isConnected:true,value:'',disabled:false,readOnly:false,getAttribute(k){return k==='placeholder'?'搜索':null},matches(){return false},getBoundingClientRect(){return {width:100,height:30,x:0,y:0}},focus(){},scrollIntoView(){},dispatchEvent(){},innerText:'',isContentEditable:false},
+  input:{tagName:'INPUT',isConnected:true,value:'',disabled:false,readOnly:false,getAttribute(k){return k==='placeholder'?'搜索':null},matches(){return false},getBoundingClientRect(){return {width:100,height:30,x:0,y:0}},focus(){},scrollIntoView(){},dispatchEvent(){return true},innerText:'',isContentEditable:false},
   button:{tagName:'BUTTON',isConnected:true,innerText:'执行搜索',value:'',getAttribute(){return null},matches(){return false},getBoundingClientRect(){return {width:80,height:30,x:10,y:10}},scrollIntoView(){},click(){value='clicked'},dispatchEvent(){}}
 }
 const list=Object.values(fields)
+for(const element of list)element.hasAttribute=function(name){return this.getAttribute(name)!=null}
 const doc={title:'测试网页',body:{innerText:'搜索页面'},documentElement:{scrollHeight:1200},querySelectorAll(){return list}}
 const ctx={document:doc,location:{href:'https://example.com'},innerWidth:400,innerHeight:800,scrollY:0,Date,
     getComputedStyle(){return {visibility:'visible',display:'block',opacity:'1'}},window:{scrollBy(){value='scrolled'}},
