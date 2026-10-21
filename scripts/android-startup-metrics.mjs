@@ -1,7 +1,7 @@
 /** Parse Android's independently reported first- and fully-drawn metrics. */
 export function readStartupMetrics(log, packageName) {
   const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const activity = `${escaped}\\/com\\.aizeek\\.newsnook\\.MainActivity`
+  const activity = `${escaped}\\/(?:com\\.aizeek\\.newsnook)?\\.MainActivity`
   const duration = String.raw`\+(?:(\d+)s)?(\d+)ms`
   const displayed = log.match(new RegExp(`Displayed ${activity}[^\\n]*?${duration}`))
   const fullyDrawn = log.match(new RegExp(`Fully drawn ${activity}[^\\n]*?${duration}`))

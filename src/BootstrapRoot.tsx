@@ -12,6 +12,7 @@ import { initCompositorWakeListener } from './lib/compositorWake'
 import { ANDROID_APP_DOWNLOAD_URL, shouldShowWebAppDownloadBanner } from './lib/appDownload'
 import { applyNativeChrome } from './lib/nativeChrome'
 import { bootMark, bootMeasure } from './lib/startupPerf'
+import { log } from './lib/logger'
 import {
   hydrateNativeStorage,
   loadPreferences,
@@ -39,9 +40,12 @@ async function bootstrap(): Promise<void> {
 
   const prefs = normalizePreferences(loadPreferences())
   applyThemeScheme(prefs.scheme, { custom: prefs.customScheme })
-  const theme = applyTheme(prefs.theme)
-  await applyNativeChrome(theme)
-  bootMark('chrome-done')
+  applyTheme(prefs.theme)
+  // The Android launch theme already owns white splash system bars. Calling
+  // SystemBars here crosses the native bridge, forces dark icons in the wrong
+  // direction during the white splash, and blocks the React mount. Apply the
+  // saved app theme exactly once in endSplashBoot() as the real UI takes over.
+  bootMark('initial-theme-ready')
 }
 
 let bootstrapPromise: Promise<void> | undefined
@@ -121,7 +125,7 @@ export function BootstrapRoot() {
       void endSplashBoot()
     }).catch((error) => {
       // Do not mount with stale native preferences/secrets on an initialization failure.
-      console.error('[NewsNook] bootstrap failed', error)
+      log.boot.error('bootstrap failed', error)
     })
     return () => {
       active = false

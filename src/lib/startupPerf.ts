@@ -21,6 +21,7 @@ export function bootMark(name: string): void {
   } catch {
     // Instrumentation must never block app startup.
   }
+  // oxlint-disable-next-line eslint/no-console -- Native WebChromeClient uses this milestone as a fallback bridge.
   console.info(`__NNSTART ${name} web=${now}ms`)
   log.boot.info(`${name} @ ${now}ms`)
 }

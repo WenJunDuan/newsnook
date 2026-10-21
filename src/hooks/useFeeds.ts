@@ -1,7 +1,6 @@
 import { catalogCacheVersion, migrateCatalogCache } from '../features/siteCatalog/cache'
 import { siteUrl } from '../features/siteCatalog/context'
-import { loadCatalogPage } from '../features/siteCatalog/service'
-import type { CatalogPage } from '../features/siteCatalog/types'
+import type { CatalogPage, CatalogRequest } from '../features/siteCatalog/types'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import {
@@ -27,15 +26,14 @@ import {
   enrichJazzyearDates,
   enrichLatepostDates,
   enrichPaulGrahamDates,
-  neteasePageEntryCount,
-  parseSourcePayload,
+} from '../lib/parseFeed/dateEnrichment'
+import {
   parseThePaperCursor,
   thePaperCursor,
   thePaperCursorAdvances,
   thePaperPageRequest,
-  zhihuEditionDate,
-} from '../lib/parseFeed'
-import { parseSourceArticles } from '../lib/sourceArticles'
+} from '../lib/parseFeed/deepChinese'
+import { zhihuEditionDate } from '../lib/parseFeed/zhihu'
 import {
   cachedListMatchesSourceVersion,
   loadCachedList,
@@ -77,6 +75,35 @@ interface FeedsResult {
   refresh: (sourceIds?: string[]) => Promise<void>
   loadMore: (sourceIds: string[]) => Promise<void>
   updateArticlePreview: (article: Article) => void
+}
+
+/** Cache display uses stored Article data; full parsers are only needed after a
+ * source fetch or a user-requested catalog page. Avoid importing the complete
+ * XML/HTML parser and source extractor graph on a normal offline cold launch.
+ */
+async function loadCatalogPage(source: NewsSource, request: CatalogRequest, signal?: AbortSignal): Promise<CatalogPage> {
+  const module = await import('../features/siteCatalog/service')
+  return module.loadCatalogPage(source, request, signal)
+}
+
+async function parseSourceArticles(
+  source: NewsSource,
+  payload: string,
+  signal?: AbortSignal,
+  pageUrl?: string,
+): Promise<Article[]> {
+  const module = await import('../lib/sourceArticles')
+  return module.parseSourceArticles(source, payload, signal, pageUrl)
+}
+
+async function parseSourcePayload(source: NewsSource, payload: string): Promise<Article[]> {
+  const module = await import('../lib/parseFeed')
+  return module.parseSourcePayload(source, payload)
+}
+
+async function neteasePageEntryCount(payload: string): Promise<number> {
+  const module = await import('../lib/parseFeed/netease')
+  return module.neteasePageEntryCount(payload)
 }
 
 /** Keep one slow source from holding the whole refresh UI indefinitely. */
@@ -588,7 +615,8 @@ export function useFeeds(
             const catalogPage = source.kind === 'web-catalog' ? await loadCatalogPage(source, { method: 'GET', url: source.url }, controller.signal) : undefined
             const payload = catalogPage ? '' : await fetchSourceText(source, controller.signal)
             if (controller.signal.aborted) return
-            const articles = catalogPage?.articles ?? parseSourcePayload(source, payload)
+            const articles = catalogPage?.articles ?? await parseSourcePayload(source, payload)
+            if (controller.signal.aborted) return
             if (!articles.length) {
               throw new Error(describeNonFeedPayload(payload) || '返回内容为空')
             }
@@ -681,7 +709,8 @@ export function useFeeds(
               const catalogPage = source.kind === 'web-catalog' ? await loadCatalogPage(source, { method: 'GET', url: source.url }, controller.signal) : undefined
               const payload = catalogPage ? '' : await fetchSourceText(source, controller.signal)
               if (controller.signal.aborted) return
-              const articles = catalogPage?.articles ?? parseSourcePayload(source, payload)
+              const articles = catalogPage?.articles ?? await parseSourcePayload(source, payload)
+              if (controller.signal.aborted) return
               if (!articles.length) {
                 throw new Error(describeNonFeedPayload(payload) || '返回内容为空')
               }
@@ -850,7 +879,7 @@ export function useFeeds(
                 const parsed = await parseSourceArticles(source, payload, controller.signal)
                 // 网易用原始条目数（过滤图集后可能为空但仍有下一页）；其它源用解析结果
                 const rawCount =
-                  source.kind === 'netease' ? neteasePageEntryCount(payload) : parsed.length
+                  source.kind === 'netease' ? await neteasePageEntryCount(payload) : parsed.length
                 const exhausted = rawCount === 0 || nextPage + 1 >= maxPages
                 updatePaging(id, {
                   phase: exhausted ? 'exhausted' : 'ready',

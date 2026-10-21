@@ -5,7 +5,6 @@ import { Capacitor } from '@capacitor/core'
 import { AppShell } from './components/AppShell'
 import { BrowserLauncher } from './features/browser/BrowserLauncher'
 import { openBrowserWithUrl } from './features/browser/browserOpen'
-import { WikiSelectionLayer } from './features/wiki/WikiSelectionLayer'
 import { DlnaCastBanner } from './components/DlnaCastBanner'
 import { OpenInAppBanner } from './components/OpenInAppBanner'
 import { DesktopSidebar } from './components/DesktopSidebar'
@@ -42,7 +41,6 @@ import {
   recommendationReadiness,
   scopeSignalsToSources,
 } from './lib/recommend'
-import { resolveArticleBody } from './lib/resolveBody'
 import { withArticlePreviewImage } from './lib/articlePreview'
 import {
   isAndroidBrowser,
@@ -90,7 +88,6 @@ import { proxyModeLabel } from './features/proxy/config'
 import { loadActiveSiteId, saveActiveSiteId } from './features/sites/layoutState'
 import type { SiteId } from './features/sites/types'
 import { useProductTour } from './features/productTour/useProductTour'
-import { UpdateDialog } from './features/appUpdate/UpdateDialog'
 import { useAppUpdate } from './features/appUpdate/useAppUpdate'
 import { usePrestore } from './features/prestore/usePrestore'
 import {
@@ -152,8 +149,12 @@ import { findSubscriptionDuplicate, replaceCustomSourceInstance, setCustomSource
 import { SettingsShell } from './components/SettingsShell'
 
 // The home feed is the only tab required for a normal cold start.
+// The wiki pane is inactive until a user selects text or opens wiki settings.
+const WikiSelectionLayer = lazy(() => import('./features/wiki/WikiSelectionLayer').then(module => ({ default: module.WikiSelectionLayer })))
 const MeScreen = lazy(() => import('./screens/MeScreen').then(module => ({ default: module.MeScreen })))
 const SiteScreen = lazy(() => import('./screens/SiteScreen').then(module => ({ default: module.SiteScreen })))
+// Update release notes use Markdown parsing, which is not needed until a dialog opens.
+const UpdateDialog = lazy(() => import('./features/appUpdate/UpdateDialog').then(module => ({ default: module.UpdateDialog })))
 
 const AboutScreen = lazy(() => import('./screens/settings/AboutScreen').then(module => ({ default: module.AboutScreen })))
 const AccountSyncScreen = lazy(() => import('./screens/settings/AccountSyncScreen').then(module => ({ default: module.AccountSyncScreen })))
@@ -270,6 +271,10 @@ function drainBodyPrefetchQueue(): void {
       try {
         // 排队期间已被移出稍后读，不再为未浏览内容消耗弱网流量。
         if (task.signal.aborted || !task.shouldPin()) return
+        // Article extraction pulls in Readability, HTML parsing and media sniffing.
+        // Defer all of that until an actual offline-body prefetch is requested.
+        const { resolveArticleBody } = await import('./lib/resolveBody')
+        if (task.signal.aborted || !task.shouldPin()) return
         const resolved = await resolveArticleBody(task.article, task.signal, task.extraSources)
         if (task.signal.aborted) return
         if (resolved.bodySource === 'video') return
@@ -330,6 +335,20 @@ export default function App() {
     }).catch(error => log.app.warn('Failed to update read-aloud preferences', error))
     return () => { active = false }
   }, [prefs.readAloud, prefs.translation.ai])
+
+  const [wikiReady, setWikiReady] = useState(false)
+  useEffect(() => {
+    // Load the wiki/HTML parser after the real home page gets its first paint.
+    // Do not make its import part of React's cold-start critical path.
+    let secondFrame = 0
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => setWikiReady(true))
+    })
+    return () => {
+      cancelAnimationFrame(firstFrame)
+      if (secondFrame) cancelAnimationFrame(secondFrame)
+    }
+  }, [])
 
   const [tab, setTab] = useState<TabKey>('today')
   const [activeSiteId, setActiveSiteId] = useState<SiteId | null>(() => loadActiveSiteId())
@@ -719,7 +738,9 @@ export default function App() {
         setTab('today')
         return
       }
-      void CapacitorApp.exitApp()
+      // Keep the root Activity, Capacitor bridge and WebView alive when leaving
+      // the home screen. Android may reclaim the process later as usual.
+      void CapacitorApp.minimizeApp()
     }).then((handle) => {
       if (disposed) {
         void handle.remove()
@@ -2122,7 +2143,11 @@ export default function App() {
         <OpenInAppBanner href={openInAppUrl} onDismiss={() => setOpenInAppDismissed(true)} />
       )}
 
-      <WikiSelectionLayer />
+      {wikiReady && (
+        <Suspense fallback={null}>
+          <WikiSelectionLayer />
+        </Suspense>
+      )}
 
       <SchemeOnboardingPrompt
         open={showSchemeOnboarding}
@@ -2159,15 +2184,19 @@ export default function App() {
         onConfirm={dismissDeepLinkError}
         onCancel={dismissDeepLinkError}
       />
-      <UpdateDialog
-        open={appUpdate.dialogOpen}
-        release={appUpdate.dialogRelease}
-        localVersion={appUpdate.localVersion}
-        onUpdate={appUpdate.onUpdate}
-        onLater={appUpdate.onLater}
-        onSkip={appUpdate.onSkip}
-        allowPermanentSkip={appUpdate.dialogOrigin === 'manual'}
-      />
+      {appUpdate.dialogOpen && appUpdate.dialogRelease && (
+        <Suspense fallback={null}>
+          <UpdateDialog
+            open={appUpdate.dialogOpen}
+            release={appUpdate.dialogRelease}
+            localVersion={appUpdate.localVersion}
+            onUpdate={appUpdate.onUpdate}
+            onLater={appUpdate.onLater}
+            onSkip={appUpdate.onSkip}
+            allowPermanentSkip={appUpdate.dialogOrigin === 'manual'}
+          />
+        </Suspense>
+      )}
       <OptionPickerDialog
         open={appUpdate.trackPickerOpen}
         title="更新通道"

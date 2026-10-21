@@ -8,7 +8,7 @@ import { withArticlePreviewImage } from '../../lib/articlePreview'
 import type { Article } from '../../lib/types'
 import type { Preferences } from '../../sources/preferences'
 import { buildPrestorePlan } from './model'
-import { syncPrestore, type PrestoreProgress } from './service'
+import type { PrestoreProgress } from './service'
 import {
   clearPrestore,
   emptyPrestoreSnapshot,
@@ -208,6 +208,10 @@ export function usePrestore({
       lastProgressSourceRef.current = ''
 
       try {
+        // Keep expensive feed parsers and article extractors out of the home
+        // screen's first module graph. The service is only needed for a real sync.
+        const { syncPrestore } = await import('./service')
+        if (controller.signal.aborted) return
         await syncPrestore({
           plan,
           perSourceLimit: prefs.prestore.perSourceLimit,

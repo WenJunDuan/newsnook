@@ -477,7 +477,10 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
         webView.setBackgroundColor(0xFF0E0F12);
         webView.resumeTimers();
         injectNativeInsets();
-        scheduleCompositorWake(webView);
+        // Synthetic touch/resize retries are only needed for restoring an already
+        // painted WebView. On a cold launch they run on an empty document and can
+        // compete with the first layout/Chromium compositor initialization.
+        if (webUiFirstFrameReady) scheduleCompositorWake(webView);
     }
 
     @Override
@@ -516,7 +519,7 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
         if (webView != null) {
             webView.resumeTimers();
             injectNativeInsets();
-            wakeWebViewCompositor(webView, true);
+            if (webUiFirstFrameReady) wakeWebViewCompositor(webView, true);
         }
     }
 
