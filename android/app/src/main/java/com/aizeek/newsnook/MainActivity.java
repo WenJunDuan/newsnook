@@ -38,6 +38,30 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
 
     /** 系统开屏一直挂到 WebView 提交首帧，避免撤出后露出默认白底 WebView */
     private volatile boolean webContentReady = false;
+    /** A real React frame is painted; distinct from HTML document commit. */
+    private boolean webUiFirstFrameReady;
+    private boolean fullyDrawnReported;
+
+    private void maybeReportFullyDrawn() {
+        if (fullyDrawnReported || !webContentReady || !webUiFirstFrameReady) return;
+        fullyDrawnReported = true;
+        traceStartup("fully-drawn-real-ui");
+        reportFullyDrawn();
+    }
+
+    // The JS interface is registered around WebView navigation and may not appear
+    // until the next document load. Console milestones are an origin-checked
+    // secondary transport, not the primary app data bridge.
+    void notifyFirstUiPaintFromConsole() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            runOnUiThread(this::notifyFirstUiPaintFromConsole);
+            return;
+        }
+        if (mainWebViewRetired) return;
+        webUiFirstFrameReady = true;
+        maybeReportFullyDrawn();
+    }
+
     /** Main WebView hosts embedded videos (Linux.do, RSS); keep Capacitor chrome features intact. */
     private NewsNookWebChromeClient mainWebChromeClient;
     private WebView mainWebView;
@@ -101,6 +125,7 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
             webView.setBackgroundColor(0xFF0E0F12);
             webContentReady = true;
             traceStartup("webview-page-commit-visible");
+            maybeReportFullyDrawn();
             injectNativeInsets();
             webView.postOnAnimation(notifyMainWebViewVisible);
         }
@@ -123,6 +148,11 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
 
     @androidx.annotation.Keep
     public class NativeThemeBridge {
+        @JavascriptInterface
+        public void notifyFirstUiPaint() {
+            runOnUiThread(MainActivity.this::notifyFirstUiPaintFromConsole);
+        }
+
         @JavascriptInterface
         public void reportStartupStage(String stage, double webTimeMs) {
             if (stage == null || stage.length() > 64) return;

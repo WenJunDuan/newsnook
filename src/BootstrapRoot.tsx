@@ -87,6 +87,30 @@ export function BootstrapRoot() {
     bootMark('first-app-commit')
   }, [appReady])
 
+  // The React layout-effect milestone precedes paint. Report a later browser
+  // frame separately so Android TTFD does not accidentally mean "JS mounted".
+  useEffect(() => {
+    if (!appReady) return
+    let nextFrame = 0
+    const firstFrame = window.requestAnimationFrame(() => {
+      nextFrame = window.requestAnimationFrame(() => {
+        bootMark('first-ui-frame')
+        try {
+          const native = (window as Window & {
+            NewsNookNative?: { notifyFirstUiPaint?: () => void }
+          }).NewsNookNative
+          native?.notifyFirstUiPaint?.()
+        } catch {
+          // A missing or retired native bridge must not delay React.
+        }
+      })
+    })
+    return () => {
+      window.cancelAnimationFrame(firstFrame)
+      if (nextFrame) window.cancelAnimationFrame(nextFrame)
+    }
+  }, [appReady])
+
   useEffect(() => {
     const unbindWake = initCompositorWakeListener()
     let active = true

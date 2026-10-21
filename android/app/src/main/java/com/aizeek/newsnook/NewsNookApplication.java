@@ -37,6 +37,18 @@ public final class NewsNookApplication extends Application {
                 new WebViewOutcomeReceiver<WebViewStartUpResult, WebViewStartupException>() {
                     @Override public void onResult(@NonNull WebViewStartUpResult result) {
                         Log.i("NewsNookStartup", "async-webview-start-complete elapsed=" + SystemClock.elapsedRealtime() + "ms");
+                        Log.i("NewsNookStartup", "webview-ui-startup-total=" + result.getTotalTimeInUiThreadMillis()
+                            + "ms max-ui-task=" + result.getMaxTimePerTaskInUiThreadMillis() + "ms");
+                        // Jetpack captures call sites that forced WebView startup to block
+                        // the UI thread. Log stacks in Debug only for reproducible diagnosis.
+                        if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+                            var locations = result.getUiThreadBlockingStartUpLocations();
+                            if (locations != null) {
+                                for (var location : locations) {
+                                    Log.w("NewsNookStartup", "WebView UI-thread blocking call site", location.getStackInformation());
+                                }
+                            }
+                        }
                         background.shutdown();
                     }
                     @Override public void onError(@NonNull WebViewStartupException error) {

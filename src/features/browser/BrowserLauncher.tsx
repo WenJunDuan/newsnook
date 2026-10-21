@@ -1,7 +1,13 @@
-import { useEffect, useState } from 'react'
-import { BrowserWorkspace } from './BrowserWorkspace'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { takeBrowserRecoverySession, type BrowserRecoverySession } from './useBrowserSession'
 import { BROWSER_OPEN_EVENT, type BrowserOpenDetail } from './browserOpen'
+
+// Do not parse browser chrome, agents and video playback code on the home screen.
+// Startup recovery still runs in this lightweight launcher and opens the workspace
+// as soon as its native state is available.
+const BrowserWorkspace = lazy(() =>
+  import('./BrowserWorkspace').then(module => ({ default: module.BrowserWorkspace })),
+)
 
 // Shared only within this JavaScript lifetime. A recreated Activity gets a new read.
 let startupRecovery: Promise<BrowserRecoverySession | null> | null = null
@@ -44,14 +50,16 @@ export function BrowserLauncher() {
     }
   }, [])
   return workspace ? (
-    <BrowserWorkspace
-      initialUrl={workspace.initialUrl}
-      recoverySession={workspace.recoverySession}
-      onExit={() => {
-        startupRecovery = Promise.resolve(null)
-        setWorkspace(null)
-      }}
-    />
+    <Suspense fallback={<div role="status" className="fixed inset-0 z-50 bg-ink text-paper flex items-center justify-center">正在打开浏览器…</div>}>
+      <BrowserWorkspace
+        initialUrl={workspace.initialUrl}
+        recoverySession={workspace.recoverySession}
+        onExit={() => {
+          startupRecovery = Promise.resolve(null)
+          setWorkspace(null)
+        }}
+      />
+    </Suspense>
   ) : null
 }
 

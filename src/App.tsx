@@ -75,8 +75,6 @@ import type { Article } from './lib/types'
 import { shouldShowSchemeOnboarding } from './lib/schemeOnboarding'
 import { THEME_MODES, THEME_SCHEMES, schemeSeedColors } from './lib/theme'
 import { FeedScreen } from './screens/FeedScreen'
-import { MeScreen } from './screens/MeScreen'
-import { SiteScreen } from './screens/SiteScreen'
 import { formatSiteBrandName, formatSiteDisplayName, getSiteCleanDomain } from './features/siteCatalog/uiUtils'
 import { clearReadingHistory, listReadingHistory, migrateCachedReadingHistory, recordArticleRead, removeReadingHistory, removeReadingHistories, restoreReadingHistories, type ReadingHistoryEntry } from './features/readingHistory/store'
 import type { LinuxDoTopicSummary } from './features/linuxdo/types'
@@ -102,8 +100,6 @@ import {
 } from './features/translation/config'
 import { resolveAiFeatureConfig } from './features/translation/aiConfig'
 import { readAloudEngineLabel } from './features/readAloud/config'
-import { GlobalReadAloudBar } from './features/readAloud/ReadAloudBar'
-import { updateActiveReadAloudPreferences } from './features/readAloud/service'
 import { FAVORITES_CATEGORY_ID, RECOMMEND_CATEGORY_ID, type CategoryId } from './sources/categories'
 import { applySnapshotToPrefs, removeSourcesFromPresets } from './sources/presets'
 import {
@@ -155,6 +151,10 @@ import { SITES, SOURCES, findSite, findSource, makeCustomSourceId } from './sour
 import { findSubscriptionDuplicate, replaceCustomSourceInstance, setCustomSourcePaused } from './features/feedDiscovery/subscriptionActions'
 import { SettingsShell } from './components/SettingsShell'
 
+// The home feed is the only tab required for a normal cold start.
+const MeScreen = lazy(() => import('./screens/MeScreen').then(module => ({ default: module.MeScreen })))
+const SiteScreen = lazy(() => import('./screens/SiteScreen').then(module => ({ default: module.SiteScreen })))
+
 const AboutScreen = lazy(() => import('./screens/settings/AboutScreen').then(module => ({ default: module.AboutScreen })))
 const AccountSyncScreen = lazy(() => import('./screens/settings/AccountSyncScreen').then(module => ({ default: module.AccountSyncScreen })))
 const ChangelogScreen = lazy(() => import('./screens/settings/ChangelogScreen').then(module => ({ default: module.ChangelogScreen })))
@@ -176,6 +176,15 @@ const ReadAloudScreen = lazy(() => import('./screens/settings/ReadAloudScreen').
 const AiSettingsScreen = lazy(() => import('./screens/settings/AiSettingsScreen').then(module => ({ default: module.AiSettingsScreen })))
 const ProxyScreen = lazy(() => import('./screens/settings/ProxyScreen').then(module => ({ default: module.ProxyScreen })))
 const ChannelsScreen = lazy(() => import('./screens/ChannelsScreen').then(module => ({ default: module.ChannelsScreen })))
+
+// The global read-aloud controller is not needed until a reader or voice
+// settings screen has been visited. Keep its media/translation dependencies
+// outside the initial home module graph.
+const GlobalReadAloudBar = lazy(() =>
+  import('./features/readAloud/ReadAloudBar').then(module => ({
+    default: module.GlobalReadAloudBar,
+  })),
+)
 
 const FeedStoreScreen = lazy(() => import('./screens/settings/FeedStoreScreen').then((module) => ({ default: module.FeedStoreScreen })))
 
@@ -307,11 +316,19 @@ export default function App() {
     () => resolveAiFeatureConfig({ ai: prefs.translation.ai }, 'speedRead'),
     [prefs.translation.ai],
   )
+  // The speech singleton does not exist at cold startup. The reader initializes
+  // it with current preferences when opened; only subsequent preference changes
+  // need to reach an already-active speech session.
+  const readAloudPrefsRef = useRef({ readAloud: prefs.readAloud, ai: prefs.translation.ai })
   useEffect(() => {
-    void updateActiveReadAloudPreferences(
-      prefs.readAloud,
-      prefs.translation.ai,
-    )
+    const previous = readAloudPrefsRef.current
+    if (previous.readAloud === prefs.readAloud && previous.ai === prefs.translation.ai) return
+    readAloudPrefsRef.current = { readAloud: prefs.readAloud, ai: prefs.translation.ai }
+    let active = true
+    void import('./features/readAloud/service').then(({ updateActiveReadAloudPreferences }) => {
+      if (active) void updateActiveReadAloudPreferences(prefs.readAloud, prefs.translation.ai)
+    }).catch(error => log.app.warn('Failed to update read-aloud preferences', error))
+    return () => { active = false }
   }, [prefs.readAloud, prefs.translation.ai])
 
   const [tab, setTab] = useState<TabKey>('today')
@@ -398,6 +415,11 @@ export default function App() {
     return articleFromSharePayload(sharedEntry.payload, prefs.customSources)
   })
   const [deepLinkError, setDeepLinkError] = useState(sharedEntry?.payload === null)
+
+  const [readAloudUiEnabled, setReadAloudUiEnabled] = useState(() => Boolean(reading))
+  useEffect(() => {
+    if (reading || settingsRoute?.name === 'read-aloud') setReadAloudUiEnabled(true)
+  }, [reading, settingsRoute?.name])
 
   useEffect(() => {
     if (!sharedEntry) return
@@ -2007,11 +2029,15 @@ export default function App() {
             </Suspense>
           ) : (
             <>
-              {renderTab()}
+              <Suspense fallback={<div role="status" className="page-x py-4 text-sm text-paper-muted">正在打开页面…</div>}>
+                {renderTab()}
+              </Suspense>
 
-              <GlobalReadAloudBar
-                currentReaderArticleId={reading?.id ?? null}
-              />
+              {readAloudUiEnabled && (
+                <Suspense fallback={null}>
+                  <GlobalReadAloudBar currentReaderArticleId={reading?.id ?? null} />
+                </Suspense>
+              )}
 
               {!focusSource && tab !== 'sites' && (
                 <TabBar

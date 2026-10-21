@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { log } from '../../lib/logger'
 import { resolveAiFeatureConfig } from './aiConfig'
 import { cleanOpenAiTranslation } from './openai'
-import { normalizeChineseVariant } from './chineseVariant'
 import {
   loadCachedFeedTranslation,
   loadCachedFeedTranslations,
@@ -144,41 +143,46 @@ export function useFeedTranslation(
         : prefs.cloud[prefs.provider]
     const provider = createTranslationProvider(prefs.provider, config)
 
-    /** 本轮已处理过的条目，避免 onBatch 与最终结果循环对同一译文双重校验与写入 */
-    const appliedIds = new Set<string>()
-
-    const applyProgressiveUpdate = (art: Article, rawText: string) => {
-      if (!art || !rawText || appliedIds.has(art.id)) return
-      appliedIds.add(art.id)
-      const trimmed = cleanOpenAiTranslation(rawText)
-
-      // 质量与完整性校验：拦截严重残缺、中英混乱或翻译直通失败
-      if (!isValidTranslationQuality(art.title, trimmed, targetLanguage)) {
-        failedIdsRef.current.add(art.id)
-        return
-      }
-
-      const normalizedTitle = normalizeChineseVariant(trimmed, targetLanguage)
-      if (!normalizedTitle) return
-
-      const item: TranslatedFeedItem = {
-        articleId: art.id,
-        title: normalizedTitle,
-        targetLanguage,
-        translatedAt: Date.now(),
-      }
-      // 即使本轮已被取消也把有效译文落盘：重启的管道据缓存跳过，不再重复请求同一标题
-      saveCachedFeedTranslations([item])
-      if (controller.signal.aborted) return
-      setTranslations((prev) => {
-        const next = new Map(prev)
-        next.set(art.id, item)
-        return next
-      })
-    }
-
     const runPipeline = async () => {
       try {
+        // Load OpenCC's large phrase dictionaries only for a real translation job.
+        // Do not add them to the home page's initial static module graph.
+        const { normalizeChineseVariant } = await import('./chineseVariant')
+        if (controller.signal.aborted) return
+
+        /** 本轮已处理过的条目，避免 onBatch 与最终结果循环对同一译文双重校验与写入 */
+        const appliedIds = new Set<string>()
+
+        const applyProgressiveUpdate = (art: Article, rawText: string) => {
+          if (!art || !rawText || appliedIds.has(art.id)) return
+          appliedIds.add(art.id)
+          const trimmed = cleanOpenAiTranslation(rawText)
+
+          // 质量与完整性校验：拦截严重残缺、中英混乱或翻译直通失败
+          if (!isValidTranslationQuality(art.title, trimmed, targetLanguage)) {
+            failedIdsRef.current.add(art.id)
+            return
+          }
+
+          const normalizedTitle = normalizeChineseVariant(trimmed, targetLanguage)
+          if (!normalizedTitle) return
+
+          const item: TranslatedFeedItem = {
+            articleId: art.id,
+            title: normalizedTitle,
+            targetLanguage,
+            translatedAt: Date.now(),
+          }
+          // 即使本轮已被取消也把有效译文落盘：重启的管道据缓存跳过，不再重复请求同一标题
+          saveCachedFeedTranslations([item])
+          if (controller.signal.aborted) return
+          setTranslations((prev) => {
+            const next = new Map(prev)
+            next.set(art.id, item)
+            return next
+          })
+        }
+
         // 分批连续处理整个列表中的所有外文条目
         for (let chunkIdx = 0; chunkIdx < neededArticles.length; chunkIdx += BATCH_SIZE) {
           if (controller.signal.aborted) break
@@ -219,6 +223,8 @@ export function useFeedTranslation(
             }
           }
         }
+      } catch (error) {
+        if (!controller.signal.aborted) log.translation.warn('Translation initialization failed:', error)
       } finally {
         if (pendingAbortRef.current === controller) {
           setIsTranslating(false)
