@@ -15,6 +15,13 @@ export function bootMark(name: string): void {
     typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now().toFixed(1)
       : String(Date.now())
+  try {
+    const bridge = (window as Window & { NewsNookNative?: { reportStartupStage?: (name: string, webTimeMs: number) => void } }).NewsNookNative
+    bridge?.reportStartupStage?.(name, performance.now())
+  } catch {
+    // Instrumentation must never block app startup.
+  }
+  console.info(`__NNSTART ${name} web=${now}ms`)
   log.boot.info(`${name} @ ${now}ms`)
 }
 

@@ -83,6 +83,10 @@
     />
     <title>有所闻 · News Nook</title>
     <script>
+      console.info('__NNSTART html-head web=' + performance.now().toFixed(1) + 'ms')
+      try {
+        window.NewsNookNative?.reportStartupStage?.('html-head', performance.now())
+      } catch (_) { /* diagnostic only */ }
       // WebView 版本检测：低于 Chrome 69 直接提示，不进入应用
       ;(function () {
         var ua = navigator.userAgent

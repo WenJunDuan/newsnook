@@ -74,34 +74,13 @@ import { chineseDate } from './lib/time'
 import type { Article } from './lib/types'
 import { shouldShowSchemeOnboarding } from './lib/schemeOnboarding'
 import { THEME_MODES, THEME_SCHEMES, schemeSeedColors } from './lib/theme'
-import { ChannelsScreen } from './screens/ChannelsScreen'
 import { FeedScreen } from './screens/FeedScreen'
 import { MeScreen } from './screens/MeScreen'
 import { SiteScreen } from './screens/SiteScreen'
 import { formatSiteBrandName, formatSiteDisplayName, getSiteCleanDomain } from './features/siteCatalog/uiUtils'
-import { AboutScreen } from './screens/settings/AboutScreen'
-import { AccountSyncScreen } from './screens/settings/AccountSyncScreen'
-import { ChangelogScreen } from './screens/settings/ChangelogScreen'
-import { OpenSourceScreen } from './screens/settings/OpenSourceScreen'
-import { AppearanceScreen } from './screens/settings/AppearanceScreen'
-import { CustomSchemeScreen } from './screens/settings/CustomSchemeScreen'
-import { CategorySettingsScreen } from './screens/settings/CategorySettingsScreen'
-import { CategorySourcesScreen } from './screens/settings/CategorySourcesScreen'
-import { CategoryEditScreen } from './screens/settings/CategoryEditScreen'
-import { CustomSourcesScreen } from './screens/settings/CustomSourcesScreen'
-import { HistoryScreen } from './screens/settings/HistoryScreen'
 import { clearReadingHistory, listReadingHistory, migrateCachedReadingHistory, recordArticleRead, removeReadingHistory, removeReadingHistories, restoreReadingHistories, type ReadingHistoryEntry } from './features/readingHistory/store'
 import type { LinuxDoTopicSummary } from './features/linuxdo/types'
 import type { ZhihuEntityRef } from './features/zhihu/types'
-import { LaterScreen } from './screens/settings/LaterScreen'
-import { LocalSearchScreen } from './screens/settings/LocalSearchScreen'
-import { PresetListScreen } from './screens/settings/PresetListScreen'
-import { StorageScreen } from './screens/settings/StorageScreen'
-import { TypographyScreen } from './screens/settings/TypographyScreen'
-import { TranslationScreen } from './screens/settings/TranslationScreen'
-import { ReadAloudScreen } from './screens/settings/ReadAloudScreen'
-import { AiSettingsScreen } from './screens/settings/AiSettingsScreen'
-import { ProxyScreen } from './screens/settings/ProxyScreen'
 import { ConfirmDialog, OptionPickerDialog } from './components/ConfirmDialog'
 import {
   BRAND_TITLE,
@@ -175,6 +154,28 @@ import {
 import { SITES, SOURCES, findSite, findSource, makeCustomSourceId } from './sources/registry'
 import { findSubscriptionDuplicate, replaceCustomSourceInstance, setCustomSourcePaused } from './features/feedDiscovery/subscriptionActions'
 import { SettingsShell } from './components/SettingsShell'
+
+const AboutScreen = lazy(() => import('./screens/settings/AboutScreen').then(module => ({ default: module.AboutScreen })))
+const AccountSyncScreen = lazy(() => import('./screens/settings/AccountSyncScreen').then(module => ({ default: module.AccountSyncScreen })))
+const ChangelogScreen = lazy(() => import('./screens/settings/ChangelogScreen').then(module => ({ default: module.ChangelogScreen })))
+const OpenSourceScreen = lazy(() => import('./screens/settings/OpenSourceScreen').then(module => ({ default: module.OpenSourceScreen })))
+const AppearanceScreen = lazy(() => import('./screens/settings/AppearanceScreen').then(module => ({ default: module.AppearanceScreen })))
+const CustomSchemeScreen = lazy(() => import('./screens/settings/CustomSchemeScreen').then(module => ({ default: module.CustomSchemeScreen })))
+const CategorySettingsScreen = lazy(() => import('./screens/settings/CategorySettingsScreen').then(module => ({ default: module.CategorySettingsScreen })))
+const CategorySourcesScreen = lazy(() => import('./screens/settings/CategorySourcesScreen').then(module => ({ default: module.CategorySourcesScreen })))
+const CategoryEditScreen = lazy(() => import('./screens/settings/CategoryEditScreen').then(module => ({ default: module.CategoryEditScreen })))
+const CustomSourcesScreen = lazy(() => import('./screens/settings/CustomSourcesScreen').then(module => ({ default: module.CustomSourcesScreen })))
+const HistoryScreen = lazy(() => import('./screens/settings/HistoryScreen').then(module => ({ default: module.HistoryScreen })))
+const LaterScreen = lazy(() => import('./screens/settings/LaterScreen').then(module => ({ default: module.LaterScreen })))
+const LocalSearchScreen = lazy(() => import('./screens/settings/LocalSearchScreen').then(module => ({ default: module.LocalSearchScreen })))
+const PresetListScreen = lazy(() => import('./screens/settings/PresetListScreen').then(module => ({ default: module.PresetListScreen })))
+const StorageScreen = lazy(() => import('./screens/settings/StorageScreen').then(module => ({ default: module.StorageScreen })))
+const TypographyScreen = lazy(() => import('./screens/settings/TypographyScreen').then(module => ({ default: module.TypographyScreen })))
+const TranslationScreen = lazy(() => import('./screens/settings/TranslationScreen').then(module => ({ default: module.TranslationScreen })))
+const ReadAloudScreen = lazy(() => import('./screens/settings/ReadAloudScreen').then(module => ({ default: module.ReadAloudScreen })))
+const AiSettingsScreen = lazy(() => import('./screens/settings/AiSettingsScreen').then(module => ({ default: module.AiSettingsScreen })))
+const ProxyScreen = lazy(() => import('./screens/settings/ProxyScreen').then(module => ({ default: module.ProxyScreen })))
+const ChannelsScreen = lazy(() => import('./screens/ChannelsScreen').then(module => ({ default: module.ChannelsScreen })))
 
 const FeedStoreScreen = lazy(() => import('./screens/settings/FeedStoreScreen').then((module) => ({ default: module.FeedStoreScreen })))
 
@@ -2028,7 +2029,13 @@ export default function App() {
                 />
               )}
 
-              {renderSettings()}
+              <Suspense fallback={
+                <div role="status" className="page-x py-4 text-sm text-paper-muted">
+                  正在打开设置…
+                </div>
+              }>
+                {renderSettings()}
+              </Suspense>
             </>
           )}
         </main>

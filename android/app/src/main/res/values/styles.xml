@@ -24,17 +24,17 @@
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <!-- 系统开屏与 WebView 首帧之间不能露白：窗口底、图标底、开屏底同色 -->
-        <item name="android:background">#0E0F12</item>
-        <item name="android:windowBackground">#0E0F12</item>
-        <item name="android:colorBackground">#0E0F12</item>
-        <item name="windowSplashScreenBackground">#0E0F12</item>
-        <!-- Android 12+ 图标背后默认会铺一圈浅色；透明图标仍会闪白圆 -->
-        <item name="windowSplashScreenIconBackgroundColor">#0E0F12</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_transparent</item>
+        <item name="android:background">#F6F2E9</item>
+        <item name="android:windowBackground">#F6F2E9</item>
+        <item name="android:colorBackground">#F6F2E9</item>
+        <item name="windowSplashScreenBackground">#F6F2E9</item>
+        <!-- System-owned launch window: the real app icon, no custom animation or delay. -->
+        <item name="windowSplashScreenIconBackgroundColor">#F6F2E9</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_mark</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
         <!-- 与边到边一致：透明栏，开屏底色由 windowSplashScreenBackground 透出 -->
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

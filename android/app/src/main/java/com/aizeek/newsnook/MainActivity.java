@@ -31,6 +31,11 @@ import java.util.Locale;
 
 public class MainActivity extends BridgeActivity implements BrowserFullscreenHost {
 
+    private static final String STARTUP_TRACE = "NewsNookStartup";
+    private static void traceStartup(String stage) {
+        Log.i(STARTUP_TRACE, stage + " elapsed=" + SystemClock.elapsedRealtime() + "ms");
+    }
+
     /** 系统开屏一直挂到 WebView 提交首帧，避免撤出后露出默认白底 WebView */
     private volatile boolean webContentReady = false;
     /** Main WebView hosts embedded videos (Linux.do, RSS); keep Capacitor chrome features intact. */
@@ -83,6 +88,7 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
         @Override
         public void onPageStarted(WebView webView) {
             if (!bindMainWebView(webView)) return;
+            traceStartup("webview-page-started");
             // Apply the native background before the first document frame.
             webView.setBackgroundColor(0xFF0E0F12);
             webView.addJavascriptInterface(new NativeThemeBridge(), "NewsNookNative");
@@ -94,6 +100,7 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
             if (!bindMainWebView(webView)) return;
             webView.setBackgroundColor(0xFF0E0F12);
             webContentReady = true;
+            traceStartup("webview-page-commit-visible");
             injectNativeInsets();
             webView.postOnAnimation(notifyMainWebViewVisible);
         }
@@ -116,6 +123,12 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
 
     @androidx.annotation.Keep
     public class NativeThemeBridge {
+        @JavascriptInterface
+        public void reportStartupStage(String stage, double webTimeMs) {
+            if (stage == null || stage.length() > 64) return;
+            Log.i(STARTUP_TRACE, "js:" + stage + " web=" + webTimeMs + "ms elapsed=" + SystemClock.elapsedRealtime() + "ms");
+        }
+
         @androidx.annotation.Keep
         @JavascriptInterface
         public void setSystemTheme(String theme) {
@@ -337,6 +350,7 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        traceStartup("activity-onCreate-begin");
         SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
         splashScreen.setKeepOnScreenCondition(() -> !webContentReady);
 
@@ -357,7 +371,9 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
         registerPlugin(LinuxDoSessionPlugin.class);
         registerPlugin(SyncNotificationPlugin.class);
         bridgeBuilder.addWebViewListener(mainWebViewListener);
+        traceStartup("plugins-registered");
         super.onCreate(savedInstanceState);
+        traceStartup("bridge-onCreate-completed");
 
         // BridgeActivity switches to Capacitor's no-action-bar theme and installs
         // its content view in super.onCreate(); reassert our window contract after it.

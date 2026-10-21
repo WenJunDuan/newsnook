@@ -29,6 +29,10 @@ final class NewsNookWebChromeClient extends BridgeWebChromeClient {
     }
 
     @Override public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
+        if (message.message().startsWith("__NNSTART ")) {
+            android.util.Log.i("NewsNookStartup", message.message() + " elapsed=" + android.os.SystemClock.elapsedRealtime() + "ms");
+            return true;
+        }
         return BrowserHostPlugin.isPrivacyModeEnabled(context) || super.onConsoleMessage(message);
     }
 
