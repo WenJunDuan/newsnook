@@ -22,3 +22,6 @@ assert.throws(()=>assertAgentEndpoint({endpoint:'https://api.example.com/v1?toke
 assert(AGENT_TOOLS.some(t=>t.name==='browser_search'))
 assert(AGENT_TOOLS.some(t=>t.name==='browser_open_url'))
 console.log('Agent approval, endpoint policy and ReAct tool catalog: PASS')
+
+assert.equal(assertAgentEndpoint({endpoint:'http://remote-gateway.example.com:8080/v1',model:'mock',apiKey:'foo',allowInsecureHttp:true}),'http://remote-gateway.example.com:8080/v1')
+assert.throws(()=>assertAgentEndpoint({endpoint:'javascript:alert(1)',model:'bad',apiKey:'foo',allowInsecureHttp:true}))

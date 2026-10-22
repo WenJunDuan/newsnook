@@ -554,6 +554,8 @@ export function BrowserAgentPanel({tabId,tabs,sheetRef,minimized,onMinimize,onNe
         </label>
         <label className="flex min-h-10 items-center justify-between gap-3"><span className="min-w-0"><span className="block font-medium">允许局域网 HTTP</span><span className="block text-[12px] leading-relaxed text-paper-muted">仅用于本地模型，密钥将以明文传输</span></span>
           <input type="checkbox" aria-label="允许局域网 HTTP" checked={config.allowLanHttp===true} onChange={event=>setConfig(previous=>({...previous,allowLanHttp:event.target.checked}))} className="size-5 accent-cinnabar"/></label>
+        <label className="flex min-h-10 items-center justify-between gap-3"><span className="min-w-0"><span className="block font-medium">允许远程 HTTP API</span><span className="block text-[12px] leading-relaxed text-paper-muted">密钥与请求内容明文传输，仅用于可信服务。</span></span>
+          <input type="checkbox" aria-label="允许远程 HTTP API" checked={config.allowInsecureHttp===true} onChange={event=>setConfig(previous=>({...previous,allowInsecureHttp:event.target.checked}))} className="size-5 accent-cinnabar"/></label>
         {error&&<div role="alert" className="flex gap-2 text-[13px] leading-relaxed text-cinnabar"><AlertCircle size={17} className="mt-0.5 shrink-0"/>{error}</div>}
         <div className="mt-1 flex justify-end gap-2"><button type="button" className="agent-secondary" onClick={()=>{setEditing(false);setError('')}}>取消</button>
           <button type="submit" disabled={saving} className="agent-primary">{saving?<LoaderCircle size={16} className="animate-spin"/>:<Check size={16}/>}保存配置</button></div>

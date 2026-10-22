@@ -250,6 +250,7 @@ async function completeJson(
           Authorization: `Bearer ${apiKey}`,
         },
         data: body,
+        disableRedirects: url.startsWith('http://'),
         connectTimeout: 15000,
         readTimeout: 120000,
       }),
