@@ -30,7 +30,9 @@ final class NewsNookWebChromeClient extends BridgeWebChromeClient {
 
     @Override public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
         if (message.message().startsWith("__NNSTART ")) {
-            android.util.Log.i("NewsNookStartup", message.message() + " elapsed=" + android.os.SystemClock.elapsedRealtime() + "ms");
+            if (BuildConfig.DEBUG || BuildConfig.STARTUP_BENCHMARK) {
+                android.util.Log.i("NewsNookStartup", message.message() + " elapsed=" + android.os.SystemClock.elapsedRealtime() + "ms");
+            }
             // The frame signal must originate from the packaged Capacitor main
             // document, not an arbitrary article, browser tab or embedded iframe.
             String source = message.sourceId();

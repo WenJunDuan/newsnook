@@ -16,7 +16,11 @@ assert.match(settings, /include\s+['"]:baselineprofile['"]/, 'Profile generator 
 assert.match(build, /androidx\.baselineprofile\.gradle\.plugin/, 'AndroidX Baseline Profile Gradle plugin must be resolved')
 assert.match(app, /apply plugin:\s*['"]androidx.baselineprofile['"]/, 'App must package generated Baseline/Startup Profiles')
 assert.match(app, /androidx.profileinstaller:profileinstaller:/, 'Sideloaded APKs need ProfileInstaller')
-assert.match(manifest, /<profileable\s+android:shell=['"]true['"]\s*\/>/, 'Target must be non-debuggable but profileable by shell')
+assert.doesNotMatch(manifest, /<profileable\b/, 'Production release must not expose shell profiling')
+for (const variant of ['benchmarkRelease', 'nonMinifiedRelease']) {
+  const variantManifest = source(`android/app/src/${variant}/AndroidManifest.xml`)
+  assert.match(variantManifest, /<profileable\s+android:shell=['"]true['"]\s*\/>/, `${variant} must remain profileable by shell`)
+}
 assert.match(app, /automaticGenerationDuringBuild\s+false/, 'Normal release CI cannot depend on a connected emulator')
 assert.match(app, /mergeIntoMain\s+true/, 'Shared startup paths should cover cloud and local releases')
 assert.match(app, /benchmarkRelease\s*\{[^}]*signingConfig\s+signingConfigs.debug/s, 'Benchmark variant must not require a production signing key')

@@ -12,7 +12,7 @@ import {
 import { initCompositorWakeListener } from './lib/compositorWake'
 import { ANDROID_APP_DOWNLOAD_URL, shouldShowWebAppDownloadBanner } from './lib/appDownload'
 import { applyNativeChrome } from './lib/nativeChrome'
-import { bootMark, bootMeasure } from './lib/startupPerf'
+import { bootMark, bootMeasure, emitFirstUiFallback } from './lib/startupPerf'
 import { log } from './lib/logger'
 import {
   hydrateNativeStorage,
@@ -80,10 +80,15 @@ function reportInitialSurfaceFrame(): void {
     const native = (window as Window & {
       NewsNookNative?: { notifyFirstUiPaint?: () => void }
     }).NewsNookNative
-    native?.notifyFirstUiPaint?.()
+    if (typeof native?.notifyFirstUiPaint === 'function') {
+      native.notifyFirstUiPaint()
+      return
+    }
   } catch {
-    // A missing or retired native bridge must not delay React.
+    // A retired native bridge must not delay React.
   }
+  // Some WebView providers install the JS interface after initial navigation.
+  if (Capacitor.isNativePlatform()) emitFirstUiFallback()
 }
 
 /** Render the actual app as soon as its persisted state and secrets are restored.

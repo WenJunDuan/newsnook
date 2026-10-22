@@ -117,19 +117,18 @@
 
 <!-- DELIVERY_RESULTS -->
 
-## 6. 复现入口与停止条件
+## 6. 维护入口与原始实验归档
 
-在仓库根目录、已配置 Android SDK/JDK 的 Node 环境执行：
+**这是历史架构实验报告，不是当前可直接执行的测试脚本清单。** 最终 beta 收尾已将一次性 `android/startuplab`、`scripts/android-startup-lab*.mjs` 及临时执行脚本移出 Git 工作区，保存在同级 Windows 归档目录 `D:\\TianFeng\\Code\\TianFeng\\newsnook-startup-archive-20261022`。完整原始记录仍保存在忽略的 `node_modules/.cache/newsnook/startup-lab-20261022/`。移除的是临时实验执行器，不是生产冷启动实现或原始测量结论。
+
+当前仓库内可复现的正式回归入口：
 
 ```powershell
-$env:NEWSNOOK_STARTUP_LAB_OUTPUT = "node_modules/.cache/newsnook/startup-lab-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-node --test scripts/android-startup-lab.test.mjs
-node scripts/android-startup-lab.mjs build lab-build-unique
-node scripts/android-startup-lab.mjs measure webview none webview-none-unique 12
+npm run test:android-startup
+npm run lint
+npm run android:sync
 ```
 
-`ANDROID_SERIAL` 选择设备；`NEWSNOOK_STARTUP_LAB_OUTPUT` 为独立本机证据目录。同一次实验的 build 和 measure 使用同一输出目录；重新构建另一套产物应新建输出目录，不能仅更换 build 标签。重复标签或已冻结产物不允许覆盖。完整应用对照须显式设置 `NEWSNOOK_STARTUP_FULL_APK`，然后执行 `node scripts/android-startup-lab.mjs full <unique-label>`；工具会用 aapt 校验其实际包名为隔离 `.benchmark`。
+如需重新采集 Profile 或 Macrobenchmark，应使用保留的 `android/baselineprofile` 模块和 [测量文档](./android-startup-macrobenchmark.md)；不要运行已归档的 lab 命令。正式 Release 不启用 `android:shell="true"`，仅隔离的 `.benchmark` 与 Profile 生成变体允许 shell 性能采样。
 
-普通 Release 构建无需启用测试模块或连接设备。实测允许不清数据的 COLD 进程启动，但不宣称设备/WebView/ART 整体完全未预热。物理设备检验必须另行保存设备、provider、APK hash、数据场景及反向重复区块，不能拿本模拟器毫秒数当普遍下限。官方对模拟器数据的限制见 <https://developer.android.com/topic/performance/benchmarking/macrobenchmark-instrumentation-args>。
-
-停止条件是：候选修改必须有明确减少的工作或可重现的性能收益；没有重现的复杂度撤回，不能通过换计时信号、补齐缺失样本或选择最快区块来保留方案。150 ms 是本轮对新增性能改造采用的工程筛选门槛，不是官方指标，也不适用于否定已实证的重复请求修复。
+普通 Release 构建无需连接设备。COLD 只代表冷进程，不代表清空数据或 ART 全冷；物理设备需要另外保存 provider、设备、APK hash、状态和重复对照，不能把模拟器数据当普遍极限。停止条件保持：只有实证减少的工作或可复现的收益才进入生产。

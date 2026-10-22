@@ -174,8 +174,10 @@ public class BrowserAgentFilesTest {
     }
 
     private static void await(BooleanSupplier ready) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (!ready.getAsBoolean() && System.nanoTime() < deadline) {
+        // Robolectric advances System.nanoTime() while draining its paused looper.
+        // Use a real sleep/poll budget, otherwise virtual time can expire while a
+        // cancelled Windows file stream is still closing on its worker thread.
+        for (int attempt = 0; attempt < 1000 && !ready.getAsBoolean(); attempt++) {
             Shadows.shadowOf(Looper.getMainLooper()).idle();
             Thread.sleep(5);
         }

@@ -34,6 +34,7 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
 
     private static final String STARTUP_TRACE = "NewsNookStartup";
     private static void traceStartup(String stage) {
+        if (!BuildConfig.DEBUG && !BuildConfig.STARTUP_BENCHMARK) return;
         Log.i(STARTUP_TRACE, stage + " elapsed=" + SystemClock.elapsedRealtime() + "ms");
     }
 
@@ -259,6 +260,7 @@ public class MainActivity extends BridgeActivity implements BrowserFullscreenHos
 
         @JavascriptInterface
         public void reportStartupStage(String stage, double webTimeMs) {
+            if (!BuildConfig.DEBUG && !BuildConfig.STARTUP_BENCHMARK) return;
             if (stage == null || stage.length() > 64) return;
             Log.i(STARTUP_TRACE, "js:" + stage + " web=" + webTimeMs + "ms elapsed=" + SystemClock.elapsedRealtime() + "ms");
         }

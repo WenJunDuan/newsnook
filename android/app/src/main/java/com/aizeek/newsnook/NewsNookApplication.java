@@ -32,13 +32,17 @@ public final class NewsNookApplication extends Application {
             WebViewStartUpConfig config = new WebViewStartUpConfig.Builder(background)
                 .setShouldRunUiThreadStartUpTasks(false)
                 .build();
-            Log.i("NewsNookStartup", "async-webview-start-requested elapsed=" + SystemClock.elapsedRealtime() + "ms");
+            if (BuildConfig.DEBUG || BuildConfig.STARTUP_BENCHMARK) {
+                Log.i("NewsNookStartup", "async-webview-start-requested elapsed=" + SystemClock.elapsedRealtime() + "ms");
+            }
             WebViewCompat.startUpWebView(this, config,
                 new WebViewOutcomeReceiver<WebViewStartUpResult, WebViewStartupException>() {
                     @Override public void onResult(@NonNull WebViewStartUpResult result) {
-                        Log.i("NewsNookStartup", "async-webview-start-complete elapsed=" + SystemClock.elapsedRealtime() + "ms");
-                        Log.i("NewsNookStartup", "webview-ui-startup-total=" + result.getTotalTimeInUiThreadMillis()
-                            + "ms max-ui-task=" + result.getMaxTimePerTaskInUiThreadMillis() + "ms");
+                        if (BuildConfig.DEBUG || BuildConfig.STARTUP_BENCHMARK) {
+                            Log.i("NewsNookStartup", "async-webview-start-complete elapsed=" + SystemClock.elapsedRealtime() + "ms");
+                            Log.i("NewsNookStartup", "webview-ui-startup-total=" + result.getTotalTimeInUiThreadMillis()
+                                + "ms max-ui-task=" + result.getMaxTimePerTaskInUiThreadMillis() + "ms");
+                        }
                         // Jetpack captures call sites that forced WebView startup to block
                         // the UI thread. Log stacks in Debug only for reproducible diagnosis.
                         if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
@@ -64,7 +68,9 @@ public final class NewsNookApplication extends Application {
 
     @Override protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
-        android.util.Log.i("NewsNookStartup", "application-attachBaseContext elapsed=" + android.os.SystemClock.elapsedRealtime() + "ms");
+        if (BuildConfig.DEBUG || BuildConfig.STARTUP_BENCHMARK) {
+            android.util.Log.i("NewsNookStartup", "application-attachBaseContext elapsed=" + android.os.SystemClock.elapsedRealtime() + "ms");
+        }
         // Permissionless PDF worker processes must not initialize application storage services.
         if (Process.myUid() == base.getApplicationInfo().uid) LegacyPrivateBrowserCleanup.sweep(base);
     }
