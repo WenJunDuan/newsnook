@@ -3,7 +3,7 @@ import {getSecureStore} from '../../account/secureStore'
 import {normalizeOpenAiBaseUrl} from '../../translation/openai'
 import {validateBrowserConfigRequest} from './browserConfig'
 
-export interface AgentConfig {endpoint:string; model:string; apiKey:string;allowLanHttp?:boolean}
+export interface AgentConfig {endpoint:string; model:string; apiKey:string;allowLanHttp?:boolean;allowInsecureHttp?:boolean}
 export interface AgentElement {id:number; tag:string; role:string; text:string; type:string; href:string; x:number; y:number;options?:{value:string;label:string;disabled?:boolean}[];bounds?:{x:number;y:number;width:number;height:number};disabled?:boolean;readOnly?:boolean;protected?:boolean;scrollable?:boolean;frameId?:string;frameDocumentId?:string;frameSnapshot?:string;frameUrl?:string;localId?:number;accept?:string;multiple?:boolean;value?:string;checked?:boolean;expanded?:boolean;selected?:boolean}
 export interface AgentObservation {snapshot:string;url:string; title:string; text:string; elements:AgentElement[]; viewport:{width:number;height:number};scrollY?:number;documentHeight?:number;tabId?:number;documentId?:string;frameId?:string;frameDocumentId?:string;frames?:AgentObservation[];capabilities?:Record<string,unknown>}
 export interface AgentTab {index:number;id:number;title:string;url:string;active:boolean}
@@ -29,7 +29,7 @@ export async function loadAgentConfig():Promise<AgentConfig>{
   let saved:Partial<AgentConfig>={}
   try {saved=JSON.parse(localStorage.getItem(STORAGE)||'{}') as Partial<AgentConfig>}catch{ /* malformed config */ }
   return {endpoint:saved.endpoint||DEFAULT.endpoint,model:saved.model||DEFAULT.model,
-    apiKey:await getSecureStore().get(KEY)||'',allowLanHttp:saved.allowLanHttp===true}
+    apiKey:await getSecureStore().get(KEY)||'',allowLanHttp:saved.allowLanHttp===true,allowInsecureHttp:saved.allowInsecureHttp===true}
 }
 /** HTTPS by default; loopback and explicitly opted-in private LAN HTTP for local inference. */
 export function assertAgentEndpoint(config:AgentConfig):string {
@@ -41,15 +41,15 @@ export function assertAgentEndpoint(config:AgentConfig):string {
   const loopback=host==='localhost'||host==='127.0.0.1'||host==='[::1]'
   const privateLan=/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$|^192\.168\.\d{1,3}\.\d{1,3}$|^172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host)
     || host.endsWith('.local')||host.endsWith('.lan')
-  if(url.protocol==='http:'&&(loopback||(config.allowLanHttp===true&&privateLan)))return endpoint
-  throw new Error('仅支持 HTTPS；局域网 HTTP 需在设置中明确开启')
+  if(url.protocol==='http:'&&(loopback||(config.allowLanHttp===true&&privateLan)||config.allowInsecureHttp===true))return endpoint
+  throw new Error('仅支持 HTTPS；HTTP 需在设置中明确开启明文传输许可')
 }
 export async function saveAgentConfig(config:AgentConfig):Promise<void>{
   const endpoint=assertAgentEndpoint(config)
   if(!config.model.trim())throw new Error('请输入模型名称')
   if(!config.apiKey.trim())throw new Error('请输入 API Key')
   await getSecureStore().set(KEY,config.apiKey.trim())
-  localStorage.setItem(STORAGE,JSON.stringify({endpoint,model:config.model.trim(),allowLanHttp:config.allowLanHttp===true}))
+  localStorage.setItem(STORAGE,JSON.stringify({endpoint,model:config.model.trim(),allowLanHttp:config.allowLanHttp===true,allowInsecureHttp:config.allowInsecureHttp===true}))
 }
 export async function browserAgentAction(args:AgentOperation):Promise<Record<string,unknown>>{
   if(Capacitor.getPlatform()!=='android')throw new Error('仅支持 NewsNook Android 内置浏览器')

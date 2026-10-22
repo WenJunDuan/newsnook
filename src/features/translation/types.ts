@@ -28,6 +28,8 @@ export interface CloudTranslationConfig {
   model?: string
   /** OpenAI 兼容及 DeepLX 单段模式并发；合法 1–10（DeepLX 建议 1–3），缺省 2。 */
   concurrency?: number
+  /** Allow explicitly opted-in plaintext HTTP for an OpenAI-compatible API on Android. */
+  allowInsecureHttp?: boolean
 }
 
 export interface AiProviderCapabilities {
@@ -41,6 +43,8 @@ export interface AiProviderConfig {
   name: string
   endpoint: string
   apiKey: string
+  /** Explicit per-provider consent to use unencrypted HTTP; off by default. */
+  allowInsecureHttp?: boolean
   /**
    * 能力必须显式声明。聊天/翻译接口可用不代表 /audio/speech 一定存在。
    * 老配置缺字段时由 normalizeAiPrefs 做兼容迁移。
