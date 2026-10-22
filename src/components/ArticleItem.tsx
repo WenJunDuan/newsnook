@@ -503,14 +503,19 @@ export const LeadStory = memo(function LeadStory({
           onClick={() => onOpen(article)}
           className={`lead-hero h-[13.75rem] sm:h-[15rem] group text-left ${framed ? 'is-framed' : ''} ${variant === 'auto' ? 'lg:hidden' : ''}`}
         >
-          <InkImage
-            src={cover}
-            onFailed={onFailed}
-            eager
-            className={`h-[13.75rem] w-full sm:h-[15rem] ${
-              read ? 'opacity-[0.78] grayscale-[0.12] saturate-[0.9]' : 'opacity-100'
-            }`}
-          />
+          {/* 外层固定高度：封面补救失败后 InkImage 可能卸载，头条框仍须占位 */}
+          <span className="block h-[13.75rem] w-full overflow-hidden sm:h-[15rem]" aria-hidden={!cover}>
+            {cover ? (
+              <InkImage
+                src={cover}
+                onFailed={onFailed}
+                eager
+                className={`h-full w-full ${
+                  read ? 'opacity-[0.78] grayscale-[0.12] saturate-[0.9]' : 'opacity-100'
+                }`}
+              />
+            ) : null}
+          </span>
           <span className="lead-cover-veil" aria-hidden />
           <span className={`lead-hero-copy page-x pb-3.5 pt-8 sm:pb-4 ${read ? 'is-read' : ''}`}>
             <span className="lead-hero-kicker flex items-center gap-2 font-mono text-[10.5px] tracking-[0.16em]">
