@@ -48,6 +48,7 @@ Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
 } })
 const HISTORY = 'newsnook:browser:history:v1'
 const MARKS = 'newsnook:browser:bookmarks:v1'
+const PRIVATE_MARKS = 'newsnook:browser:private-bookmarks:v1'
 const SHORTCUTS = 'newsnook:browser:shortcuts:v1'
 const listeners = new Map<string, (event: any) => void>()
 const blank = (): BrowserState => ({ url: null, back: false, forward: false, desktop: false, error: null })
@@ -342,6 +343,9 @@ async function playFirst() {
 try {
   await mount()
   await visit('https://public.example/before-private')
+  await menu('添加书签')
+  await back()
+  const publicMarks = storage.get(MARKS)
   const publicHistory = storage.get(HISTORY)
   const sameTab = current.tabId
   const sameOpenCalls = openCalls.length
@@ -353,13 +357,36 @@ try {
   await back()
   await visit('https://private.example/never-record')
   assert.equal(storage.get(HISTORY), publicHistory, 'private navigation preserves old history without adding a new visit')
+  failedStorageKey = PRIVATE_MARKS
   await menu('添加书签')
-  assert.ok(JSON.parse(storage.get(MARKS) || '[]').some((item: {url: string}) => item.url.includes('never-record')), 'explicit bookmarks remain available in privacy mode')
+  assert.equal(storage.has(PRIVATE_MARKS), false, 'failed private-bookmark writes must never claim success')
+  assert.ok(button('添加书签', select('[role="dialog"][aria-label="网页工具"]')))
+  failedStorageKey = null
+  await click(button('添加书签', select('[role="dialog"][aria-label="网页工具"]')))
+  assert.equal(storage.get(MARKS), publicMarks, 'private-mode bookmark saves must not change public bookmarks')
+  assert.ok(JSON.parse(storage.get(PRIVATE_MARKS) || '[]').some((item: {url: string}) => item.url.includes('never-record')),
+    'private-mode bookmarks persist separately after an explicit save')
+  await click(button('书签', select('[role="dialog"][aria-label="网页工具"]')))
+  const bookmarksPanel = () => select('section[aria-label="书签"]')
+  assert.ok(bookmarksPanel().textContent?.includes('public.example'), 'public bookmarks remain accessible in private mode')
+  assert.ok(!bookmarksPanel().textContent?.includes('private.example'), 'bookmarks are locked by default')
+  for (let i = 0; i < 4; i++) await click(select('section[aria-label="书签"] h2 button'))
+  assert.ok(!bookmarksPanel().textContent?.includes('private.example'), 'four title taps are insufficient')
+  await click(select('section[aria-label="书签"] h2 button'))
+  assert.ok(button('打开：private.example'), 'fifth title tap reveals explicitly saved private bookmark')
+  await back()
+  await menu('书签')
+  assert.ok(!bookmarksPanel().textContent?.includes('private.example'), 'leaving and reopening the panel re-locks it')
   await mount(true)
   await visit('https://private.example/after-reopen')
   assert.equal(storage.get(HISTORY), publicHistory, 'privacy preference remains effective after reopening the browser')
   await menu('隐私模式')
   assert.equal(JSON.parse(storage.get('newsnook:browser:preferences:v1') || '{}').privateMode, false)
+  await back()
+  await menu('书签')
+  assert.ok(bookmarksPanel().textContent?.includes('public.example'), 'normal mode keeps public bookmarks visible')
+  assert.ok(!bookmarksPanel().textContent?.includes('never-record'), 'normal mode does not reveal private bookmarks')
+  assert.ok(!document.querySelector('section[aria-label="书签"] h2 button'), 'normal mode title remains static')
   await back()
   await act(async () => listeners.get('navigation')?.({...current, privateMode: false, recordHistory: false, phase: 'end'}))
   assert.equal(storage.get(HISTORY), publicHistory, 'a late completion from a private document cannot backfill history after the switch turns off')
@@ -367,7 +394,27 @@ try {
   const publicVisits = JSON.parse(storage.get(HISTORY) || '[]') as {url: string}[]
   assert.ok(publicVisits.some(item => item.url.includes('after-private')), 'new public visits resume after disabling privacy')
   assert.equal(publicVisits.some(item => item.url.includes('private.example')), false, 'private visits are never written back later')
-  console.log('Persistent privacy: same tab, no new records, explicit bookmarks and restart persistence OK')
+
+  // End-to-end scoped deletion and confirmation: neither path can mutate normal bookmarks.
+  await menu('隐私模式')
+  await back()
+  await menu('书签')
+  for (let i = 0; i < 5; i++) await click(select('section[aria-label="书签"] h2 button'))
+  await click(button('删除：private.example'))
+  assert.deepEqual(JSON.parse(storage.get(PRIVATE_MARKS) || '[]'), [], 'private removal updates only the private collection')
+  assert.equal(storage.get(MARKS), publicMarks, 'private removal leaves normal bookmarks byte-identical')
+  await back()
+  await visit('https://private.example/second-bookmark')
+  await menu('添加书签')
+  await click(button('书签', select('[role="dialog"][aria-label="网页工具"]')))
+  for (let i = 0; i < 5; i++) await click(select('section[aria-label="书签"] h2 button'))
+  assert.ok(button('打开：private.example'))
+  await click(button('清空隐私书签'))
+  assert.ok(document.body.textContent?.includes('不影响普通书签'), 'private clear warns about its isolated scope')
+  await click(button('确认删除'))
+  assert.deepEqual(JSON.parse(storage.get(PRIVATE_MARKS) || '[]'), [], 'private clear actually persists an empty private list')
+  assert.equal(storage.get(MARKS), publicMarks, 'private clear never removes normal bookmarks')
+  console.log('Persistent privacy: scoped saving, isolated removal, hidden reveal and restart persistence OK')
 
   await mount()
   await visit()

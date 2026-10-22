@@ -20,6 +20,7 @@ import {
   removeSiteHistory, saveBrowserVisit, type BrowserShortcut, type BrowserVisit,
 } from './browserHistory'
 import { browserMediaResources, browserResourceTitle } from './browserMedia'
+import { loadBrowserBookmarks, saveBrowserBookmarks, toggleBrowserBookmark, type BookmarkScope } from './browserBookmarks'
 import {
   BROWSER_ENGINES, BROWSER_KEYS, browserHostLabel, readBrowserList, readBrowserPreference,
   resolveBrowserAddress, writeBrowserPreference, loadBrowserPreferences, saveBrowserPreferences, toggleBrowserDesktopMode, type BrowserPreferences, type BrowserSearchChoice,
@@ -109,7 +110,8 @@ export function BrowserWorkspace({
   const [playError, setPlayError] = useState('')
   const playbackSelection = useRef(0)
   const [history, setHistory] = useState(() => normalizeBrowserVisits(readBrowserList(BROWSER_KEYS.history)))
-  const [marks, setMarks] = useState(() => normalizeBrowserVisits(readBrowserList(BROWSER_KEYS.bookmarks)))
+  const [marks, setMarks] = useState(() => loadBrowserBookmarks('normal'))
+  const [privateMarks, setPrivateMarks] = useState(() => loadBrowserBookmarks('private'))
   const [hiddenHosts, setHiddenHosts] = useState(() => normalizeHiddenBrowserHosts(readBrowserList(BROWSER_KEYS.hiddenHosts)))
   const [shortcuts, setShortcuts] = useState(() => normalizeBrowserShortcuts(readBrowserList(BROWSER_KEYS.shortcuts)))
   const [bottomAddress, setBottomAddress] = useState(() => readBrowserPreference(BROWSER_KEYS.addressPosition) !== 'top')
@@ -161,7 +163,8 @@ export function BrowserWorkspace({
   useEffect(() => {setFindOpen(false); clearPageFind()}, [current, session.state.tabId, clearPageFind])
   const active = /^https?:\/\//i.test(current)
   const title = session.state.title && session.state.title !== '网页' ? session.state.title : browserHostLabel(current)
-  const marked = marks.some(item => item.url === current)
+  // Scope follows the current recording mode. A private save never changes a public star.
+  const marked = (privateMode ? privateMarks : marks).some(item => item.url === current)
   const currentMedia = session.mediaTabs.get(session.state.tabId ?? -1)
   const resources = useMemo(() => browserMediaResources(currentMedia?.observations ?? []), [currentMedia])
   const recent = useMemo(() => compactRecentSites(history, hiddenHosts, 4), [history, hiddenHosts])
@@ -281,18 +284,35 @@ export function BrowserWorkspace({
     } catch {setNotice({message: '复制失败，请重试', error: true})}
   }
   const saveHistory = (next: BrowserVisit[]) => persist(BROWSER_KEYS.history, next, () => {historyRef.current = next; setHistory(next)})
-  const saveMarks = (next: BrowserVisit[]) => persist(BROWSER_KEYS.bookmarks, next, () => setMarks(next))
+  const saveMarks = (scope: BookmarkScope, next: BrowserVisit[]): boolean => {
+    try {
+      const saved = saveBrowserBookmarks(scope, next)
+      if (scope === 'private') setPrivateMarks(saved)
+      else setMarks(saved)
+      return true
+    } catch (error) {
+      setNotice({message: error instanceof Error ? error.message : '保存失败，请重试', error: true})
+      return false
+    }
+  }
   const saveShortcuts = (next: BrowserShortcut[]) => persist(BROWSER_KEYS.shortcuts, next, () => setShortcuts(next))
   const toggleBookmark = () => {
     if (!active) return
-    const next = marked ? marks.filter(item => item.url !== current) : [{url: current, title, time: Date.now()}, ...marks].slice(0, 500)
-    if (saveMarks(next)) setNotice({message: marked ? '已移除书签' : '已添加书签'})
+    const scope: BookmarkScope = privateMode ? 'private' : 'normal'
+    const currentMarks = privateMode ? privateMarks : marks
+    const change = toggleBrowserBookmark(currentMarks, current, title)
+    if (change.entries === currentMarks) return
+    if (saveMarks(scope, change.entries)) {
+      setNotice({message: change.added ? '已添加书签' : '已移除书签'})
+    }
   }
-  const confirmClear = (kind: 'history' | 'bookmarks') => {
+  const confirmClear = (kind: 'history' | 'bookmarks' | 'privateBookmarks') => {
     setConfirmation({
-      title: kind === 'history' ? '清空浏览历史' : '清空书签',
-      message: kind === 'history' ? '将删除全部浏览记录。' : '将删除全部已保存的书签。',
-      confirm: () => kind === 'history' ? saveHistory([]) : saveMarks([]),
+      title: kind === 'history' ? '清空浏览历史' : kind === 'privateBookmarks' ? '清空隐私书签' : '清空书签',
+      message: kind === 'history' ? '将删除全部浏览记录。'
+        : kind === 'privateBookmarks' ? '将删除全部隐私书签，不影响普通书签。'
+          : '将删除全部普通书签，不影响隐私书签。',
+      confirm: () => kind === 'history' ? saveHistory([]) : saveMarks(kind === 'privateBookmarks' ? 'private' : 'normal', []),
     })
   }
   const editShortcut = (draft: ShortcutDraft) => {
@@ -529,9 +549,12 @@ export function BrowserWorkspace({
       onRemove={tab => {void session.remove(tab).then(ok => {if (ok && playing?.tabId === tab.id) setPlaying(null)})}}
       onNew={() => finishTabChange(session.command('new'))}/></BrowserFullPage>}
     {(panel === 'history' || panel === 'bookmarks') && <BrowserFullPage title={panel === 'history' ? '浏览历史' : '书签'}><BrowserPlacesPanel privateMode={privateMode} key={panel} kind={panel} entries={panel === 'history' ? history : marks}
+      privateEntries={privateMode && panel === 'bookmarks' ? privateMarks : []}
       hiddenHostCount={hiddenHosts.length} onBack={() => setPanel(null)} onOpen={url => {void openAddress(url)}}
-      onRemove={url => {if (panel === 'history') saveHistory(history.filter(item => item.url !== url)); else saveMarks(marks.filter(item => item.url !== url))}}
+      onRemove={url => {if (panel === 'history') saveHistory(history.filter(item => item.url !== url)); else saveMarks('normal', marks.filter(item => item.url !== url))}}
       onClear={() => confirmClear(panel)}
+      onPrivateRemove={url => saveMarks('private', privateMarks.filter(item => item.url !== url))}
+      onPrivateClear={() => confirmClear('privateBookmarks')}
       onRestoreHidden={() => {if (persist(BROWSER_KEYS.hiddenHosts, [], () => setHiddenHosts([]))) setNotice({message:'首页网站已恢复'})}}
       onHistoryOptions={entry => setPlaceAction({kind:'history', entry})}/></BrowserFullPage>}
     {panel === 'settings' && <BrowserFullPage title="浏览器设置"><BrowserSettingsPanel search={search} bottomAddress={bottomAddress} desktop={session.state.desktop}

@@ -44,6 +44,8 @@ html[data-scheme='buer'] .browser-workspace svg.lucide[fill='none'] { fill: none
   margin: 0; color: var(--color-paper); font-size: 17px; font-weight: 600; line-height: 1.45;
 }
 .browser-page-heading p { margin: 2px 0 0; font-size: 13px; color: var(--color-paper-muted); }
+.browser-page-title-tap { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; touch-action: manipulation; }
+.browser-page-title-tap:focus-visible { outline: 2px solid var(--color-paper-muted); outline-offset: 4px; border-radius: 4px; }
 .browser-page-actions { display: flex; flex-shrink: 0; align-items: center; }
 .browser-count-label { padding: 8px 12px; font-size: 14px; color: var(--color-paper-muted); font-variant-numeric: tabular-nums; }
 .browser-panel {
