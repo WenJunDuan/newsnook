@@ -11,6 +11,7 @@ import { ProxyAgent, fetch as undiciFetch } from 'undici'
 import { SocksProxyAgent } from 'socks-proxy-agent'
 
 import { normalizeProxyPrefs } from './src/features/proxy/config.ts'
+import { imageReferer } from './src/lib/imageProxy.ts'
 import { planNodeUpstream } from './src/features/proxy/nodeAgent.ts'
 import type { ProxyPrefs } from './src/features/proxy/types.ts'
 import { type NewsSource } from './src/sources/registry.ts'
@@ -439,10 +440,6 @@ function upstreamProxy(): Plugin {
             return
           }
 
-          // 微信图床：带他站 / localhost Referer 会返回「未经允许不可引用」占位图；不传 Referer 即可
-          const isWechatImage =
-            isImage &&
-            /(?:^|\.)(?:mmbiz\.qpic\.cn|mmecoa\.qpic\.cn|qlogo\.cn)$/i.test(targetUrl.hostname)
           // 网易 flv CDN：带 localhost Origin 会 403，代理侧不传 Origin，只带站点 Referer
           const headers: Record<string, string> = {
             // Bilibili server-side page fetch with a mobile UA is less stable and may return
@@ -461,18 +458,16 @@ function upstreamProxy(): Plugin {
                   'text/html,application/xhtml+xml,application/xml,application/json;q=0.9,*/*;q=0.8',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
           }
-          if (!isWechatImage) {
-            headers.Referer =
-              isNetease
-                ? isMedia
-                  ? 'https://3g.163.com/'
-                  : 'https://www.163.com/'
-                : isBilibiliPage || isBilibiliAsset
-                  ? 'https://www.bilibili.com/'
-                  : targetUrl.hostname.endsWith('.translate.goog')
-                    ? 'https://translate.google.com/'
-                    : `${targetUrl.origin}/`
-          }
+          const referer = isImage
+            ? imageReferer(targetUrl.href)
+            : isNetease
+              ? isMedia ? 'https://3g.163.com/' : 'https://www.163.com/'
+              : isBilibiliPage || isBilibiliAsset
+                ? 'https://www.bilibili.com/'
+                : targetUrl.hostname.endsWith('.translate.goog')
+                  ? 'https://translate.google.com/'
+                  : `${targetUrl.origin}/`
+          if (referer) headers.Referer = referer
 
           const range = isMedia ? req.headers.range : undefined
           if (range) headers.Range = range

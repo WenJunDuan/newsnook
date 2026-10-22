@@ -24,7 +24,7 @@ export function previewImageUrl(value: unknown, baseUrl?: string): string | unde
   } catch { return undefined }
 }
 
-export function firstImageIn(html: string, baseUrl?: string): string | undefined {
+export function firstImageIn(html: string, baseUrl?: string, excludedUrl?: string): string | undefined {
   if (!/<img\b/i.test(html)) return undefined
   const { document } = parseHTML(html)
   for (const img of Array.from(document.querySelectorAll('img'))) {
@@ -34,7 +34,7 @@ export function firstImageIn(html: string, baseUrl?: string): string | undefined
       const candidates = name.endsWith('srcset') ? (raw ?? '').split(',').map((part) => part.trim().split(/\s+/)[0]) : [raw]
       for (const candidate of candidates) {
         const url = previewImageUrl(candidate, baseUrl)
-        if (url) return url
+        if (url && url !== excludedUrl) return url
       }
     }
     const advance = img.getAttribute('data-advance')
@@ -43,7 +43,7 @@ export function firstImageIn(html: string, baseUrl?: string): string | undefined
         const entries = JSON.parse(atob(advance)) as Array<{ Url?: string; url?: string }>
         for (const entry of entries) {
           const url = previewImageUrl(entry.Url || entry.url, baseUrl)
-          if (url) return url
+          if (url && url !== excludedUrl) return url
         }
       } catch { /* Ignore malformed lazy image payloads. */ }
     }

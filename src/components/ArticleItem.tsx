@@ -2,8 +2,8 @@ import { memo, useState } from 'react'
 import { BookmarkCheck, Cloud } from 'lucide-react'
 
 import { InkImage } from './InkImage'
+import { useArticleCover } from '../hooks/useArticleCover'
 import { EditorialCoverPlaceholder } from './EditorialCoverPlaceholder'
-import { articleCoverUrl } from '../lib/articleAudio'
 import { feedDisplayTitle } from '../lib/articleTitle'
 import { cleanSummaryText } from '../lib/cleanSummary'
 import type { Article } from '../lib/types'
@@ -50,7 +50,7 @@ export const ArticleRow = memo(function ArticleRow({
   )
   const originalDisplayTitle = feedDisplayTitle(article.title, article.summary)
   const displaySummary = cleanSummaryText(activeSummary, activeTitle)
-  const cover = articleCoverUrl(article.image)
+  const { cover, onFailed } = useArticleCover(article)
 
   const renderTranslateBadge = () => {
     if (!hasTranslation) return null
@@ -179,6 +179,7 @@ export const ArticleRow = memo(function ArticleRow({
             <span className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-haze/70 bg-ink-deep/30 shadow-2xs sm:h-17 sm:w-17">
               <InkImage
                 src={cover}
+                onFailed={onFailed}
                 collapseOnError
                 className={`h-full w-full object-cover transition-all duration-300 ${
                   read
@@ -211,6 +212,7 @@ export const ArticleRow = memo(function ArticleRow({
             <span className={`relative block w-full overflow-hidden border-b border-haze/55 bg-ink-deep/30 ${article.contentType === 'video' ? 'aspect-video' : 'aspect-[4/3]'}`}>
               <InkImage
                 src={cover}
+                onFailed={onFailed}
                 collapseOnError
                 className={`h-full w-full object-cover transition-[transform,filter,opacity] duration-300 ${
                   read
@@ -312,6 +314,7 @@ export const ArticleRow = memo(function ArticleRow({
               <div className="relative mb-3.5 overflow-hidden rounded-lg bg-ink border border-haze/60">
                 <InkImage
                   src={cover}
+                  onFailed={onFailed}
                   collapseOnError
                   className={`${article.contentType === 'video' ? 'aspect-video h-auto' : 'h-38'} w-full object-cover transition-all duration-500 group-hover:scale-105 ${
                     read
@@ -466,7 +469,7 @@ export const LeadStory = memo(function LeadStory({
   )
   const originalDisplayTitle = feedDisplayTitle(article.title, article.summary)
   const displaySummary = cleanSummaryText(activeSummary, activeTitle)
-  const cover = articleCoverUrl(article.image)
+  const { cover, onFailed } = useArticleCover(article)
 
   const renderTranslateBadge = () => {
     if (!hasTranslation) return null
@@ -501,7 +504,8 @@ export const LeadStory = memo(function LeadStory({
           className={`lead-hero h-[13.75rem] sm:h-[15rem] group text-left ${framed ? 'is-framed' : ''} ${variant === 'auto' ? 'lg:hidden' : ''}`}
         >
           <InkImage
-            src={cover || article.image}
+            src={cover}
+            onFailed={onFailed}
             eager
             className={`h-[13.75rem] w-full sm:h-[15rem] ${
               read ? 'opacity-[0.78] grayscale-[0.12] saturate-[0.9]' : 'opacity-100'
@@ -577,7 +581,8 @@ export const LeadStory = memo(function LeadStory({
             {/* 左侧大图 (7 栅格) */}
             <div className="col-span-7 h-[300px] xl:h-[350px] 2xl:h-[400px] w-full overflow-hidden rounded-xl bg-ink border border-haze/70 relative">
               <InkImage
-                src={cover || article.image}
+                src={cover}
+                onFailed={onFailed}
                 eager
                 collapseOnError
                 className={`h-full w-full object-cover transition-all duration-700 ease-ink group-hover:scale-105 ${
