@@ -32,6 +32,8 @@ interface UsePrestoreArgs {
 export interface UsePrestoreResult {
   sourceCount: number
   snapshot: PrestoreSnapshot
+  /** Local filesystem restoration is complete, including an empty/offline result. */
+  restored: boolean
   articleIds: ReadonlySet<string>
   syncing: boolean
   progress: PrestoreProgress | null
@@ -64,6 +66,7 @@ export function usePrestore({
     [enabledIds, prefs, presetId],
   )
   const [snapshot, setSnapshot] = useState<PrestoreSnapshot>(emptyPrestoreSnapshot)
+  const [restored, setRestored] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [progress, setProgress] = useState<PrestoreProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -82,6 +85,10 @@ export function usePrestore({
     let disposed = false
     void loadPrestoreSnapshot().then((next) => {
       if (!disposed) setSnapshot(next)
+    }).catch(error => {
+      log.storage.warn('Prestore snapshot restore failed', error)
+    }).finally(() => {
+      if (!disposed) setRestored(true)
     })
     return () => {
       disposed = true
@@ -290,6 +297,7 @@ export function usePrestore({
   return {
     sourceCount: plan.sources.length,
     snapshot,
+    restored,
     articleIds: snapshot.articleIds,
     syncing,
     progress,

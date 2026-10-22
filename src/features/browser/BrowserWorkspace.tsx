@@ -9,6 +9,7 @@ import {createBrowserConfigController} from './agent/browserConfig'
 import {downloadUserScriptSource} from './userScriptImport'
 import {loadUserScripts,saveUserScripts} from './scripts'
 import { useHardwareBackLayer } from '../../hooks/useHardwareBackLayer'
+import { useStartupBlocker } from '../../hooks/useStartupReadiness'
 import { suppressBrowserLogs } from '../../lib/logger'
 import { InkVideoPlayer } from '../../components/InkVideoPlayer'
 import type { MediaResourceDescriptor } from '../mediaSniffer/types'
@@ -116,6 +117,11 @@ export function BrowserWorkspace({
     const saved = readBrowserPreference(BROWSER_KEYS.search)
     return saved && Object.prototype.hasOwnProperty.call(BROWSER_ENGINES, saved) ? saved as BrowserSearchChoice : 'bing'
   })
+  // Share the resolver's result between startup identity and the native command.
+  const initialAddress = useMemo(
+    () => initialUrl && /^https?:\/\//i.test(initialUrl) ? resolveBrowserAddress(initialUrl, search) : null,
+    [initialUrl, search],
+  )
   const searchRef = useRef(search)
   searchRef.current = search
   const bottomAddressRef = useRef(bottomAddress)
@@ -142,9 +148,10 @@ export function BrowserWorkspace({
   }, [persist])
   const covered = Boolean(panel || searchOpen || placeAction || shortcutDraft || confirmation || playing)
   const session = useBrowserSession(viewport, covered, recordVisit, bottomAddress, recoverySession, {
-    settings: preferences, agentSheetRef, agentSheetVisible: agentOpen && !agentMinimized && !covered,
+    settings: preferences, initialUrl: initialAddress ?? undefined, agentSheetRef, agentSheetVisible: agentOpen && !agentMinimized && !covered,
     agentOperating: agentOpen && agentOperating,
   })
+  useStartupBlocker(!session.initialSessionSettled)
   const current = session.state.url || ''
   const currentUrlRef = useRef(current)
   currentUrlRef.current = current
@@ -211,8 +218,7 @@ export function BrowserWorkspace({
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  const openAddress = async (value: string): Promise<boolean> => {
-    const url = resolveBrowserAddress(value, search)
+  const openResolvedAddress = async (url: string | null): Promise<boolean> => {
     if (!url) {session.setError('请输入有效网址或搜索关键词'); return false}
     const revision = uiRevision.current
     const opened = await session.open(url)
@@ -221,16 +227,17 @@ export function BrowserWorkspace({
     return opened
   }
 
-  const openAddressRef = useRef(openAddress)
-  openAddressRef.current = openAddress
+  const openAddress = (value: string): Promise<boolean> => openResolvedAddress(resolveBrowserAddress(value, search))
+  const openResolvedAddressRef = useRef(openResolvedAddress)
+  openResolvedAddressRef.current = openResolvedAddress
 
   const initialOpenedUrl = useRef<string | null>(null)
   useEffect(() => {
     if (!initialUrl || initialOpenedUrl.current === initialUrl || !/^https?:\/\//i.test(initialUrl)) return
-    void openAddressRef.current(initialUrl).then(opened => {
+    void openResolvedAddressRef.current(initialAddress).then(opened => {
       if (opened) initialOpenedUrl.current = initialUrl
     })
-  }, [initialUrl])
+  }, [initialUrl, initialAddress])
 
   useEffect(() => {
     const handleOpen = (event: Event) => {
@@ -246,7 +253,7 @@ export function BrowserWorkspace({
         setShortcutDraft(null)
         setConfirmation(null)
         setPlaying(null)
-        void openAddressRef.current(url)
+        void openResolvedAddressRef.current(resolveBrowserAddress(url, searchRef.current))
       }
     }
     window.addEventListener(BROWSER_OPEN_EVENT, handleOpen)

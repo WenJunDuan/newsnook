@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 
 import App from './App'
+import { StartupReadinessProvider } from './components/StartupReadiness'
 import { FloatingVideoProvider } from './features/floatingVideo/FloatingVideoProvider'
 import { WebAppDownloadBanner } from './components/WebAppDownloadBanner'
 import {
@@ -73,6 +74,18 @@ async function endSplashBoot(): Promise<void> {
   await applyNativeChrome(theme)
 }
 
+function reportInitialSurfaceFrame(): void {
+  bootMark('first-ui-frame')
+  try {
+    const native = (window as Window & {
+      NewsNookNative?: { notifyFirstUiPaint?: () => void }
+    }).NewsNookNative
+    native?.notifyFirstUiPaint?.()
+  } catch {
+    // A missing or retired native bridge must not delay React.
+  }
+}
+
 /** Render the actual app as soon as its persisted state and secrets are restored.
  * No artificial launch animation, static splash, or time-based mount delay.
  */
@@ -89,30 +102,6 @@ export function BootstrapRoot() {
     if (!appReady) return
     clearBootSplashShell()
     bootMark('first-app-commit')
-  }, [appReady])
-
-  // The React layout-effect milestone precedes paint. Report a later browser
-  // frame separately so Android TTFD does not accidentally mean "JS mounted".
-  useEffect(() => {
-    if (!appReady) return
-    let nextFrame = 0
-    const firstFrame = window.requestAnimationFrame(() => {
-      nextFrame = window.requestAnimationFrame(() => {
-        bootMark('first-ui-frame')
-        try {
-          const native = (window as Window & {
-            NewsNookNative?: { notifyFirstUiPaint?: () => void }
-          }).NewsNookNative
-          native?.notifyFirstUiPaint?.()
-        } catch {
-          // A missing or retired native bridge must not delay React.
-        }
-      })
-    })
-    return () => {
-      window.cancelAnimationFrame(firstFrame)
-      if (nextFrame) window.cancelAnimationFrame(nextFrame)
-    }
   }, [appReady])
 
   useEffect(() => {
@@ -138,7 +127,11 @@ export function BootstrapRoot() {
 
   return (
     <>
-      {appReady && <FloatingVideoProvider><App /></FloatingVideoProvider>}
+      {appReady && (
+        <StartupReadinessProvider onReady={reportInitialSurfaceFrame}>
+          <FloatingVideoProvider><App /></FloatingVideoProvider>
+        </StartupReadinessProvider>
+      )}
       {showAppDownload && (
         <WebAppDownloadBanner
           href={ANDROID_APP_DOWNLOAD_URL}

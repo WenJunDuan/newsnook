@@ -1,10 +1,23 @@
 import assert from 'node:assert/strict'
+import { registerHooks } from 'node:module'
 import { mock } from 'node:test'
 import React, { act, useState } from 'react'
 import { parseHTML } from 'linkedom'
 import type { BrowserRecoverySession, BrowserState, BrowserTab } from '../src/features/browser/useBrowserSession'
 import { installUserScript, saveUserScripts, type UserScript } from '../src/features/browser/scripts'
 import type { MediaResourceDescriptor } from '../src/features/mediaSniffer/types'
+
+// Node has no stylesheet loader. The dedicated launcher test exercises pending CSS;
+// this suite covers the real workspace controls and native session after styles load.
+const styleLoader = registerHooks({
+  load(url, context, nextLoad) {
+    const path = new URL(url).pathname
+    if (path.endsWith('/features/browser/browser.css') || path.endsWith('/features/browser/agent/agent.css')) {
+      return { format: 'module', shortCircuit: true, source: '' }
+    }
+    return nextLoad(url, context)
+  },
+})
 
 const { window } = parseHTML('<html><body><div id="root"></div></body></html>')
 const document = window.document
@@ -900,6 +913,7 @@ try {
   console.log('Browser recovery: one-time launcher handoff, StrictMode, retained error tabs, manual reload and pending exit OK')
 } finally {
   await act(async () => root.unmount())
+  styleLoader.deregister()
   mock.restoreAll()
 }
 console.log('Browser workspace: overlays, pending navigation, blank tabs, downloads, confirmations, persistence and media ownership passed 3 iterations')

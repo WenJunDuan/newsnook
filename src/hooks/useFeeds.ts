@@ -1023,7 +1023,14 @@ export function useFeeds(
   }, [])
 
   useEffect(() => {
-    void prefetchMissing(automaticFetchIdsRef.current)
+    let cancelled = false
+    // The owning App can start its explicit refresh later in this same effect
+    // flush. Yield one microtask so its in-flight guard prevents an immediately
+    // aborted duplicate request; standalone hooks still prefetch cache misses.
+    void Promise.resolve().then(() => {
+      if (!cancelled) void prefetchMissing(automaticFetchIdsRef.current)
+    })
+    return () => { cancelled = true }
   }, [automaticFetchKey, prefetchMissing])
 
   const articles = useMemo(() => {

@@ -3,6 +3,8 @@ import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 
 import { AppShell } from './components/AppShell'
+import { StartupPending } from './components/StartupReadiness'
+import { useStartupBlocker, useStartupReady } from './hooks/useStartupReadiness'
 import { BrowserLauncher } from './features/browser/BrowserLauncher'
 import { openBrowserWithUrl } from './features/browser/browserOpen'
 import { DlnaCastBanner } from './components/DlnaCastBanner'
@@ -32,8 +34,9 @@ import {
 import { sortArticles } from './lib/feedPagination'
 import { recoverAppScrollAfterNavigation } from './lib/gestureStyles'
 import { dismissTopHardwareBackLayer } from './lib/hardwareBackStack'
-import { haptics } from './lib/haptics'
+import { useLaterArticles } from './hooks/useLaterArticles'
 import { log } from './lib/logger'
+import { scheduleIdleWork } from './lib/idleWork'
 import {
   buildReadingProfile,
   collectReadArticles,
@@ -61,12 +64,10 @@ import {
   listCacheStats,
   loadEnabledSources,
   loadIdSet,
-  loadLaterArticles,
   markSchemeOnboardingSeen,
   markSyncOnboardingSeen,
   saveEnabledSources,
   saveIdSet,
-  saveLaterArticles,
 } from './lib/storage'
 import { chineseDate } from './lib/time'
 import type { Article } from './lib/types'
@@ -166,7 +167,10 @@ const CategorySettingsScreen = lazy(() => import('./screens/settings/CategorySet
 const CategorySourcesScreen = lazy(() => import('./screens/settings/CategorySourcesScreen').then(module => ({ default: module.CategorySourcesScreen })))
 const CategoryEditScreen = lazy(() => import('./screens/settings/CategoryEditScreen').then(module => ({ default: module.CategoryEditScreen })))
 const CustomSourcesScreen = lazy(() => import('./screens/settings/CustomSourcesScreen').then(module => ({ default: module.CustomSourcesScreen })))
-const HistoryScreen = lazy(() => import('./screens/settings/HistoryScreen').then(module => ({ default: module.HistoryScreen })))
+const HistoryScreen = lazy(() => Promise.all([
+  import('./screens/settings/HistoryScreen'),
+  import('./styles/history-editorial.css'),
+]).then(([module]) => ({ default: module.HistoryScreen })))
 const LaterScreen = lazy(() => import('./screens/settings/LaterScreen').then(module => ({ default: module.LaterScreen })))
 const LocalSearchScreen = lazy(() => import('./screens/settings/LocalSearchScreen').then(module => ({ default: module.LocalSearchScreen })))
 const PresetListScreen = lazy(() => import('./screens/settings/PresetListScreen').then(module => ({ default: module.PresetListScreen })))
@@ -317,6 +321,10 @@ function prefetchBody(task: BodyPrefetchTask): void {
 
 export default function App() {
   const { prefs, resolvedTheme, update, replaceFromSync: replacePreferences } = usePreferences()
+  const [launchUrlReady, setLaunchUrlReady] = useState(() => !Capacitor.isNativePlatform())
+  const [browserOpen, setBrowserOpen] = useState(false)
+  useStartupBlocker(!launchUrlReady)
+  const startupReady = useStartupReady()
   const speedReadConfig = useMemo(
     () => resolveAiFeatureConfig({ ai: prefs.translation.ai }, 'speedRead'),
     [prefs.translation.ai],
@@ -483,9 +491,7 @@ export default function App() {
     setTab('today')
     startProductTourNow()
   }, [startProductTourNow])
-  const [later, setLater] = useState<Article[]>(() => loadLaterArticles())
   const [readIds, setReadIds] = useState<Set<string>>(() => loadIdSet('read'))
-  const laterRef = useRef(later)
   /** 推荐排序经 ref 读取已读集合：打开文章返回时不重排，避免列表跳动 */
   const readIdsRef = useRef(readIds)
   readIdsRef.current = readIds
@@ -504,6 +510,7 @@ export default function App() {
     if (!cacheSnapshotReadyRef.current) return
     setCacheSnapshot(readCacheSnapshot())
   }, [])
+  const { later, laterRef, toggleLater, removeLater } = useLaterArticles(notifyCacheChange)
 
   useEffect(() => {
     const needsSnapshot =
@@ -868,7 +875,7 @@ export default function App() {
         recommendScope,
       ),
     )
-  }, [categoryId, recommendScope, recommendProfileSeq])
+  }, [categoryId, recommendScope, recommendProfileSeq, laterRef])
 
   /** 推荐结果：排除已读与稍后读（稍后读有专页），冷启动退化为按时间 */
   const recommendedArticles = useMemo(() => {
@@ -876,7 +883,7 @@ export default function App() {
     const excludeIds = new Set(readIdsRef.current)
     for (const item of laterRef.current) excludeIds.add(item.id)
     return rankRecommendations(articles, recommendProfile, { excludeIds })
-  }, [articles, recommendProfile])
+  }, [articles, recommendProfile, laterRef])
 
   /** 单源筛选时保持数组引用稳定：每次渲染现算会让列表翻译等依赖 articles 的 effect 反复中止重启 */
   const displayedArticles = useMemo(() => {
@@ -940,31 +947,46 @@ export default function App() {
   )
 
   const laterIds = useMemo(() => new Set(later.map((item) => item.id)), [later])
+  const initialBodyPinsReconciledRef = useRef(false)
 
   useEffect(() => saveEnabledSources(enabledIds), [enabledIds])
-  useEffect(() => saveLaterArticles(later), [later])
   useEffect(() => saveIdSet('read', readIds), [readIds])
 
   useEffect(() => {
     laterRef.current = later
+    if (!startupReady) return
     const controller = new AbortController()
-    const pinnedIds = new Set(later.map((item) => item.id))
-    syncBodyPins(pinnedIds)
+    // Reconciliation parses every cached body. Preserve offline pin repair and
+    // prefetch, but let the initial usable surface display before this scan.
+    const maintainBodies = () => {
+      if (controller.signal.aborted || laterRef.current !== later) return
+      const pinnedIds = new Set(later.map((item) => item.id))
+      syncBodyPins(pinnedIds)
+      initialBodyPinsReconciledRef.current = true
 
-    later.forEach((article) => {
-      if (article.contentType === 'video' || hasCachedBody(article.id)) return
-      if (findSource(article.sourceId, prefs.customSources)?.paused) return
-      prefetchBody({
-        article,
-        signal: controller.signal,
-        shouldPin: () => laterRef.current.some((item) => item.id === article.id),
-        onCacheChange: handleBodyCacheChange,
-        extraSources: prefs.customSources,
+      later.forEach((article) => {
+        if (article.contentType === 'video' || hasCachedBody(article.id)) return
+        if (findSource(article.sourceId, prefs.customSources)?.paused) return
+        prefetchBody({
+          article,
+          signal: controller.signal,
+          shouldPin: () => laterRef.current.some((item) => item.id === article.id),
+          onCacheChange: handleBodyCacheChange,
+          extraSources: prefs.customSources,
+        })
       })
-    })
-    notifyCacheChange()
-    return () => controller.abort()
-  }, [later, notifyCacheChange, handleBodyCacheChange, prefs.customSources])
+      notifyCacheChange()
+    }
+    // Only the startup scan waits for idle. Later saves keep their existing
+    // post-commit prefetch timing, with cached bodies already pinned by the action.
+    let cancelMaintenance: (() => void) | undefined
+    if (initialBodyPinsReconciledRef.current) maintainBodies()
+    else cancelMaintenance = scheduleIdleWork(maintainBodies)
+    return () => {
+      cancelMaintenance?.()
+      controller.abort()
+    }
+  }, [later, laterRef, notifyCacheChange, handleBodyCacheChange, prefs.customSources, startupReady])
 
   const customSourcesRef = useRef(prefs.customSources)
   customSourcesRef.current = prefs.customSources
@@ -1032,6 +1054,7 @@ export default function App() {
         if (!disposed && launch?.url) openFromUrl(launch.url)
       })
       .catch(() => {})
+      .finally(() => { if (!disposed) setLaunchUrlReady(true) })
 
     void CapacitorApp.addListener('appUrlOpen', (event) => {
       if (!disposed) openFromUrl(event.url)
@@ -1077,6 +1100,14 @@ export default function App() {
     eggOpen,
     deepLinkError,
   })
+  // A first-use style choice is already usable. A returning feed must first
+  // restore its local offline snapshot; network refresh never blocks readiness.
+  // Covered lazy pages do not delay the selected browser, reader or onboarding.
+  const mainSurfaceVisible = !showSchemeOnboarding && !reading && !browserOpen
+  useStartupBlocker(
+    mainSurfaceVisible && !activeSiteId && !settingsRoute &&
+    tab === 'today' && !prestore.restored,
+  )
   /**
    * 同步介绍只在功能引导之后、首页无遮挡时露一次面，且只对未登录用户。
    * 它是可选加分项，不参与 driver.js 的引导流程，两个按钮都会记下「看过」。
@@ -1092,32 +1123,6 @@ export default function App() {
     !focusSourceId &&
     !eggOpen &&
     !deepLinkError
-
-  const toggleLater = useCallback((article: Article) => {
-    if (laterRef.current.some((item) => item.id === article.id)) {
-      const next = laterRef.current.filter((item) => item.id !== article.id)
-      laterRef.current = next
-      setLater(next)
-      setBodyPinned(article.id, false)
-      void haptics.tick()
-      notifyCacheChange()
-      return
-    }
-
-    const next = [article, ...laterRef.current]
-    laterRef.current = next
-    setLater(next)
-    void haptics.success()
-  }, [notifyCacheChange])
-
-  const removeLater = useCallback((id: string) => {
-    const next = laterRef.current.filter((item) => item.id !== id)
-    laterRef.current = next
-    setLater(next)
-    setBodyPinned(id, false)
-    void haptics.tick()
-    notifyCacheChange()
-  }, [notifyCacheChange])
 
   const toggleSource = useCallback((id: string) => {
     setEnabledIds((prev) =>
@@ -1498,7 +1503,7 @@ export default function App() {
 
     if (settingsRoute.name === 'feed-store') {
       return (
-        <Suspense fallback={<SettingsShell title="RSS 订阅商店" caption="正在打开订阅发现…" onBack={() => setSettingsRoute(settingsRoute.returnTo ? { name: settingsRoute.returnTo } : null)}><p className="page-x text-paper-muted">正在加载…</p></SettingsShell>}>
+        <Suspense fallback={<StartupPending pending={mainSurfaceVisible}><SettingsShell title="RSS 订阅商店" caption="正在打开订阅发现…" onBack={() => setSettingsRoute(settingsRoute.returnTo ? { name: settingsRoute.returnTo } : null)}><p className="page-x text-paper-muted">正在加载…</p></SettingsShell></StartupPending>}>
         <FeedStoreScreen
           prefs={prefs}
           currentCategoryId={categoryId}
@@ -1961,7 +1966,7 @@ export default function App() {
 
   return (
     <AppShell>
-      <BrowserLauncher />
+      <BrowserLauncher onVisibilityChange={setBrowserOpen} />
       <div className="flex h-full w-full flex-row overflow-hidden">
         {!activeSiteId && <DesktopSidebar
           categories={categories}
@@ -2012,9 +2017,9 @@ export default function App() {
           {activeSiteId === 'zhihu' ? (
             <Suspense
               fallback={
-                <div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-paper-faint">
+                <StartupPending pending={mainSurfaceVisible}><div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-paper-faint">
                   正在打开知乎工作区…
-                </div>
+                </div></StartupPending>
               }
             >
               <ZhihuWorkspace
@@ -2034,9 +2039,9 @@ export default function App() {
           ) : activeSiteId === 'linuxdo' ? (
             <Suspense
               fallback={
-                <div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-paper-faint">
+                <StartupPending pending={mainSurfaceVisible}><div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-paper-faint">
                   正在打开 Linux.do 工作区…
-                </div>
+                </div></StartupPending>
               }
             >
               <LinuxDoWorkspace
@@ -2050,7 +2055,7 @@ export default function App() {
             </Suspense>
           ) : (
             <>
-              <Suspense fallback={<div role="status" className="page-x py-4 text-sm text-paper-muted">正在打开页面…</div>}>
+              <Suspense fallback={<StartupPending pending={mainSurfaceVisible && !settingsRoute}><div role="status" className="page-x py-4 text-sm text-paper-muted">正在打开页面…</div></StartupPending>}>
                 {renderTab()}
               </Suspense>
 
@@ -2077,9 +2082,9 @@ export default function App() {
               )}
 
               <Suspense fallback={
-                <div role="status" className="page-x py-4 text-sm text-paper-muted">
+                <StartupPending pending={mainSurfaceVisible}><div role="status" className="page-x py-4 text-sm text-paper-muted">
                   正在打开设置…
-                </div>
+                </div></StartupPending>
               }>
                 {renderSettings()}
               </Suspense>
@@ -2097,7 +2102,7 @@ export default function App() {
       {reading && (
         <Suspense
           fallback={
-            <div
+            <StartupPending pending={!browserOpen}><div
               role="status"
               aria-label="正在打开文章"
               className="absolute inset-0 z-30 flex items-center justify-center bg-ink"
@@ -2109,11 +2114,12 @@ export default function App() {
                   正在打开分享的文章…
                 </span>
               ) : null}
-            </div>
+            </div></StartupPending>
           }
         >
           <ReaderScreen
             article={reading}
+            startupVisible={!browserOpen}
             saved={laterIds.has(reading.id)}
             onClose={closeReader}
             onToggleLater={toggleLater}

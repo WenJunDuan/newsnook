@@ -1,12 +1,18 @@
-import { Suspense, lazy, useEffect, useState } from 'react'
-import { takeBrowserRecoverySession, type BrowserRecoverySession } from './useBrowserSession'
+import { Suspense, lazy, useEffect, useLayoutEffect, useState } from 'react'
+import { StartupPending } from '../../components/StartupReadiness'
+import { useStartupBlocker } from '../../hooks/useStartupReadiness'
+import { takeBrowserRecoverySession, type BrowserRecoverySession } from './nativeBrowser'
 import { BROWSER_OPEN_EVENT, type BrowserOpenDetail } from './browserOpen'
 
 // Do not parse browser chrome, agents and video playback code on the home screen.
 // Startup recovery still runs in this lightweight launcher and opens the workspace
 // as soon as its native state is available.
 const BrowserWorkspace = lazy(() =>
-  import('./BrowserWorkspace').then(module => ({ default: module.BrowserWorkspace })),
+  Promise.all([
+    import('./BrowserWorkspace'),
+    import('./browser.css'),
+    import('./agent/agent.css'),
+  ]).then(([module]) => ({ default: module.BrowserWorkspace })),
 )
 
 // Shared only within this JavaScript lifetime. A recreated Activity gets a new read.
@@ -22,8 +28,14 @@ interface WorkspaceState {
 }
 
 /** Native WebView site viewport and a themed NewsNook browser chrome. */
-export function BrowserLauncher() {
+export function BrowserLauncher({ onVisibilityChange }: { onVisibilityChange?: (visible: boolean) => void }) {
   const [workspace, setWorkspace] = useState<WorkspaceState | null>(null)
+  const [startupRecoveryResolved, setStartupRecoveryResolved] = useState(false)
+  useStartupBlocker(!startupRecoveryResolved)
+  const visible = Boolean(workspace)
+  useLayoutEffect(() => {
+    onVisibilityChange?.(visible)
+  }, [onVisibilityChange, visible])
   useEffect(() => {
     let live = true
     const enter = (event: Event) => {
@@ -35,6 +47,7 @@ export function BrowserLauncher() {
         if (!current) return { initialUrl }
         return initialUrl ? { ...current, initialUrl } : current
       })
+      setStartupRecoveryResolved(true)
     }
     window.addEventListener(BROWSER_OPEN_EVENT, enter)
     const request = readStartupRecovery()
@@ -43,6 +56,7 @@ export function BrowserLauncher() {
       // Consume only from a live effect, so StrictMode's trial mount cannot lose it.
       startupRecovery = Promise.resolve(null)
       if (snapshot) setWorkspace({ recoverySession: snapshot })
+      setStartupRecoveryResolved(true)
     })
     return () => {
       live = false
@@ -50,7 +64,7 @@ export function BrowserLauncher() {
     }
   }, [])
   return workspace ? (
-    <Suspense fallback={<div role="status" className="fixed inset-0 z-50 bg-ink text-paper flex items-center justify-center">正在打开浏览器…</div>}>
+    <Suspense fallback={<StartupPending><div role="status" className="fixed inset-0 z-50 bg-ink text-paper flex items-center justify-center">正在打开浏览器…</div></StartupPending>}>
       <BrowserWorkspace
         initialUrl={workspace.initialUrl}
         recoverySession={workspace.recoverySession}

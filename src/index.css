@@ -36,10 +36,7 @@
 
 @import './styles/settings-paper.css';
 
-@import './styles/history-editorial.css';
-@import './features/browser/browser.css';
-@import './features/browser/agent/agent.css';
-
+/* Browser and reading-history styles load with their lazy screens. */
 @import './styles/buer.css';
 
 @import './styles/themes-extended.css';

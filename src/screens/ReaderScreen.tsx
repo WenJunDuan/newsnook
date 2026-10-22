@@ -32,6 +32,7 @@ import { usePagedReader } from '../hooks/usePagedReader'
 import { useProgressiveImages } from '../hooks/useProgressiveImages'
 import { useReaderFontPinch } from '../hooks/useReaderFontPinch'
 import { useReducedMotion } from '../hooks/useReducedMotion'
+import { useStartupBlocker } from '../hooks/useStartupReadiness'
 import { revokeBlobUrl } from '../features/proxy/hydrateImages'
 import { deferMediaInHtml, DEFERRED_SRC_ATTR, type DeferredHostPhase } from '../lib/deferReaderMedia'
 import { stageYoutubeEmbedsInHtml } from '../lib/youtubeEmbeds'
@@ -104,6 +105,8 @@ interface Props {
   onOpenRelated?: (article: Article) => void
   /** Android：仅 Wi-Fi 自动加载阅读页媒体 */
   wifiOnlyAutoLoadMedia?: boolean
+  /** A covering browser owns the initial surface while this reader restores in the background. */
+  startupVisible?: boolean
 }
 
 type LoadState = 'loading' | 'ready' | 'error'
@@ -124,6 +127,7 @@ export function ReaderScreen({
   onOpenSettings,
   onOpenRelated,
   wifiOnlyAutoLoadMedia = false,
+  startupVisible = true,
 }: Props) {
   const reduced = useReducedMotion()
   const { connectionType } = useNetworkStatus()
@@ -150,6 +154,10 @@ export function ReaderScreen({
   const [error, setError] = useState<string | null>(null)
   const [fromCache, setFromCache] = useState(false)
   const [retryToken, setRetryToken] = useState(0)
+  const [localBodyRestoredFor, setLocalBodyRestoredFor] = useState<string | null>(null)
+  const localBodyRestorePending = retryToken === 0 && article.contentType !== 'video' &&
+    localBodyRestoredFor !== article.id
+  useStartupBlocker(startupVisible && localBodyRestorePending)
   const [unlockedMediaUrls, setUnlockedMediaUrls] = useState<string[]>([])
   const [mediaPlayables, setMediaPlayables] = useState<Record<string, string>>({})
   const mediaPlayablesRef = useRef(mediaPlayables)
@@ -559,6 +567,7 @@ export function ReaderScreen({
         setBodySource(cached.bodySource)
         setFromCache(true)
         setLoadState('ready')
+        setLocalBodyRestoredFor(article.id)
         restoreTitle(cached.article)
         if (!cached.article) {
           saveCachedBody(article, {
@@ -579,6 +588,8 @@ export function ReaderScreen({
     setFromCache(false)
 
     const loadFromNetwork = () => {
+      // Startup waits for local recovery, never for an upstream network response.
+      setLocalBodyRestoredFor(article.id)
       void resolveArticleBody(
         retryToken > 0 && article.videoUrl
           ? { ...article, videoUrl: undefined }
@@ -635,12 +646,17 @@ export function ReaderScreen({
           setBodySource(prestored.bodySource)
           setFromCache(true)
           setLoadState('ready')
+          setLocalBodyRestoredFor(article.id)
           restoreTitle(prestored.article)
           const previewArticle = withArticlePreviewImage(withResolvedShareTitle(article, prestored.article.title), prestored.html, prestored.article.image)
           saveCachedBody(previewArticle, { html: prestored.html, bodySource: prestored.bodySource })
           onCacheChange(previewArticle)
           return
         }
+        loadFromNetwork()
+      }).catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        log.storage.warn('Reader prestored body restore failed', article.id, error)
         loadFromNetwork()
       })
     } else {

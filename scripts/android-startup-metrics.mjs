@@ -11,8 +11,8 @@ export function readStartupMetrics(log, packageName) {
   }
   const ms = match => match ? Number(match[1] || 0) * 1000 + Number(match[2]) : null
   const start = nativeEvent('application-attachBaseContext')
-  const commit = nativeEvent('__NNSTART first-app-commit')
-  const frame = nativeEvent('__NNSTART first-ui-frame')
+  const commit = nativeEvent('(?:js:|__NNSTART )first-app-commit\\b')
+  const frame = nativeEvent('(?:js:|__NNSTART )first-ui-frame\\b')
   return {
     ttidMs: ms(displayed),
     ttfdMs: ms(fullyDrawn),
@@ -24,5 +24,7 @@ export function readStartupMetrics(log, packageName) {
 export function summarizeTimes(values) {
   if (!values.length) return null
   const sorted = [...values].sort((a, b) => a - b)
-  return { n: sorted.length, median: sorted[Math.floor((sorted.length - 1) / 2)], p90: sorted[Math.ceil(sorted.length * 0.9) - 1] }
+  const midpoint = Math.floor(sorted.length / 2)
+  const median = sorted.length % 2 ? sorted[midpoint] : (sorted[midpoint - 1] + sorted[midpoint]) / 2
+  return { n: sorted.length, median, p90: sorted[Math.ceil(sorted.length * 0.9) - 1] }
 }

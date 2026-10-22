@@ -5,7 +5,8 @@
 
 import { findSource } from '../../sources/registry'
 import type { Article } from '../types'
-import { escapeHtml, stripTags, type ResolvedBody } from './shared'
+import { escapeHtml, stripTags } from '../htmlText'
+import type { ResolvedBody } from './shared'
 
 /**
  * 出版社对普通浏览器 UA 常回 401/403 挑战页，却为了社交分享卡片对爬虫 UA

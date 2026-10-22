@@ -690,11 +690,10 @@ function unlayerCssPlugin(): Plugin {
             code: Buffer.from(res.css),
             targets: { chrome: 69 << 16 },
           })
-          // lightningcss 无法降级含 var() 的 color-mix，最终扫一遍兜底
+          // Lower known theme colors; preserve other complete color-mix expressions.
+          // A regex ending at the first ')' corrupts nested var() values and can
+          // discard valid modern-browser styling or break final CSS compression.
           let css = colorMixToRgb(lowered.code.toString())
-            .replace(/color-mix\([^)]*\)/g, (m) => {
-              return m.includes('var(') ? 'transparent' : m
-            })
 
           // Flex gap polyfill: Chrome < 84 不支持 flex gap。
           // 为每个 .gap-* utility 追加精确的 margin fallback。
@@ -729,7 +728,7 @@ function unlayerCssPlugin(): Plugin {
 
           // lightningcss 不降级 :where()（Chrome 88+）；剥离 @property 后部分
           // Android WebView 又匹配不到 Tailwind 的 @supports 变量兜底 → divide-y 等失效
-          file.source = applyWebViewCssCompat(css)
+          file.source = applyWebViewCssCompat(css, { minify: true })
         }
       }
     },

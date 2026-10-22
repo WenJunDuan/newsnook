@@ -16,6 +16,14 @@ I/ActivityTaskManager(362): Displayed ${releasePkg}/.MainActivity for user 0: +9
 I/ActivityTaskManager(362): Fully drawn ${releasePkg}/.MainActivity: +1s297ms`
 assert.deepEqual(readStartupMetrics(releaseLog, releasePkg), {ttidMs:987,ttfdMs:1297,appCommitFromAttachMs:828,frameFromAttachMs:1297})
 assert.deepEqual(readStartupMetrics('', pkg), {ttidMs:null,ttfdMs:null,appCommitFromAttachMs:null,frameFromAttachMs:null})
+const directBridgeLog = output.replaceAll('__NNSTART ', 'js:')
+assert.deepEqual(readStartupMetrics(directBridgeLog, pkg), {ttidMs:2345,ttfdMs:2350,appCommitFromAttachMs:1111,frameFromAttachMs:1222},
+  'The early JavaScript bridge must expose the same milestones as the console fallback')
+const duplicateFrameLog = directBridgeLog + '\nI NewsNookStartup: __NNSTART first-ui-frame web=1105ms elapsed=801227ms'
+assert.equal(readStartupMetrics(duplicateFrameLog, pkg).frameFromAttachMs, 1222,
+  'A later console fallback must not replace the first observed frame milestone')
 assert.deepEqual(summarizeTimes([1800,2300,3000,1900,2000]), {n:5,median:2000,p90:3000})
+assert.deepEqual(summarizeTimes([1800,2300,1900,2000]), {n:4,median:1950,p90:2300},
+  'Even sample counts use the average of the two middle observations')
 assert.equal(summarizeTimes([]), null)
 console.log('Android TTID/TTFD log parsing and summary: ok')
