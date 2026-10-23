@@ -59,6 +59,8 @@ import {
 } from '../lib/shareLink'
 import { resolveArticleBody, type BodySource } from '../lib/resolveBody'
 import { articleCoverUrl } from '../lib/articleAudio'
+import { isExcerptUpgrade, shouldRecheckCachedExcerpt, shouldReplaceCachedBody } from '../lib/feedBodyEvidence'
+import { shouldRenderStandaloneCover } from '../lib/articlePreview'
 import { articleRelativeTime } from '../lib/time'
 import { extractEmbeddedVideoPageUrl } from '../lib/videoArticle'
 import type { Article } from '../lib/types'
@@ -153,6 +155,10 @@ export function ReaderScreen({
   const [resolvedTitle, setResolvedTitle] = useState<string | undefined>()
   const [error, setError] = useState<string | null>(null)
   const [fromCache, setFromCache] = useState(false)
+  const [excerptSavedAt, setExcerptSavedAt] = useState<number | null>(null)
+  const [lastReconnectAt, setLastReconnectAt] = useState(0)
+  const lastConnectionTypeRef = useRef<string | null>(null)
+  const excerptAttemptRef = useRef<{ id: string; at: number } | null>(null)
   const [retryToken, setRetryToken] = useState(0)
   const [localBodyRestoredFor, setLocalBodyRestoredFor] = useState<string | null>(null)
   const localBodyRestorePending = retryToken === 0 && article.contentType !== 'video' &&
@@ -562,9 +568,10 @@ export function ReaderScreen({
     // 正文内容是静态的，命中缓存直接出，断网也能重读；重新抽取时才绕过
     if (retryToken === 0 && article.contentType !== 'video') {
       const cached = loadCachedBody(article.id)
-      if (cached) {
+      if (cached && !shouldReplaceCachedBody(article, cached)) {
         setHtml(cached.html)
         setBodySource(cached.bodySource)
+        setExcerptSavedAt(cached.bodySource === 'feed-excerpt' ? cached.savedAt : null)
         setFromCache(true)
         setLoadState('ready')
         setLocalBodyRestoredFor(article.id)
@@ -583,6 +590,7 @@ export function ReaderScreen({
     setLoadState('loading')
     setHtml('')
     setBodySource(null)
+    setExcerptSavedAt(null)
     setResolvedOriginUrl(undefined)
     setResolvedTitle(undefined)
     setFromCache(false)
@@ -616,6 +624,7 @@ export function ReaderScreen({
           if (controller.signal.aborted) return
           setHtml(resolved.contentHtml)
           setBodySource(resolved.bodySource)
+          setExcerptSavedAt(resolved.bodySource === 'feed-excerpt' ? Date.now() : null)
           setResolvedOriginUrl(resolved.resolvedOriginUrl)
           setResolvedTitle(resolved.title)
           setLoadState('ready')
@@ -641,15 +650,18 @@ export function ReaderScreen({
     if (retryToken === 0 && article.contentType !== 'video') {
       void loadPrestoredBody(article.id).then((prestored) => {
         if (controller.signal.aborted) return
-        if (prestored) {
+        if (prestored && !shouldReplaceCachedBody(article, prestored)) {
           setHtml(prestored.html)
           setBodySource(prestored.bodySource)
+          setExcerptSavedAt(prestored.bodySource === 'feed-excerpt' ? prestored.savedAt : null)
           setFromCache(true)
           setLoadState('ready')
           setLocalBodyRestoredFor(article.id)
           restoreTitle(prestored.article)
           const previewArticle = withArticlePreviewImage(withResolvedShareTitle(article, prestored.article.title), prestored.html, prestored.article.image)
-          saveCachedBody(previewArticle, { html: prestored.html, bodySource: prestored.bodySource })
+          if (prestored.bodySource !== 'feed-excerpt') {
+            saveCachedBody(previewArticle, { html: prestored.html, bodySource: prestored.bodySource })
+          }
           onCacheChange(previewArticle)
           return
         }
@@ -665,6 +677,47 @@ export function ReaderScreen({
 
     return () => controller.abort()
   }, [article, customSources, onCacheChange, retryToken])
+
+  // Offline-first: show a cached, unconfirmed excerpt immediately. Retry it
+  // quietly when stale or on reconnection; never turn a transient failure into
+  // a blank reader or an endless refetch loop.
+  useEffect(() => {
+    const onOnline = () => setLastReconnectAt(Date.now())
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [])
+  useEffect(() => {
+    if (lastConnectionTypeRef.current === 'none' && connectionType && connectionType !== 'none') {
+      setLastReconnectAt(Date.now())
+    }
+    lastConnectionTypeRef.current = connectionType
+  }, [connectionType])
+  useEffect(() => {
+    if (retryToken !== 0 || loadState !== 'ready' || bodySource !== 'feed-excerpt' ||
+        excerptSavedAt === null || connectionType === 'none' ||
+        (typeof navigator !== 'undefined' && navigator.onLine === false)) return
+    const now = Date.now()
+    if (!shouldRecheckCachedExcerpt(bodySource, excerptSavedAt, now, lastReconnectAt > excerptSavedAt)) return
+    const previous = excerptAttemptRef.current
+    if (previous?.id === article.id && now - previous.at < 2 * 60_000) return
+    excerptAttemptRef.current = { id: article.id, at: now }
+    const controller = new AbortController()
+    void resolveArticleBody(article, controller.signal, customSources).then((resolved) => {
+      if (controller.signal.aborted || !isExcerptUpgrade(html, resolved)) return
+      const newer = loadCachedBody(article.id)
+      if (newer && newer.bodySource !== 'feed-excerpt') return
+      const updated = withArticlePreviewImage(withResolvedShareTitle(article, resolved.title), resolved.contentHtml, resolved.image)
+      saveCachedBody(updated, { html: resolved.contentHtml, bodySource: resolved.bodySource })
+      setHtml(resolved.contentHtml)
+      setBodySource(resolved.bodySource)
+      setExcerptSavedAt(null)
+      setFromCache(false)
+      setResolvedOriginUrl(resolved.resolvedOriginUrl)
+      setResolvedTitle(resolved.title)
+      onCacheChange(updated)
+    }).catch(() => { /* keep the readable, cached excerpt and try after cooldown */ })
+    return () => controller.abort()
+  }, [article, bodySource, connectionType, customSources, excerptSavedAt, html, loadState, onCacheChange, lastReconnectAt, retryToken])
 
   useEffect(() => {
     if (loadState === 'ready') {
@@ -689,6 +742,13 @@ export function ReaderScreen({
     return () => clearTimeout(timer)
   }, [article.contentType, article.videoUrl, html, loadState])
   const coverUrl = articleCoverUrl(article.image)
+  // The feed might already include the metadata cover as its first image.
+  // Only suppress that duplicate; non-feed article covers keep their styling.
+  const showStandaloneCover = useMemo(
+    () => Boolean(coverUrl && (!['feed', 'feed-excerpt'].includes(bodySource || '') ||
+      shouldRenderStandaloneCover(article.image, html, article.originUrl))),
+    [coverUrl, bodySource, article.image, article.originUrl, html],
+  )
   const autoLoadMedia = shouldAutoLoadMedia({
     wifiOnlyAutoLoadMedia: Boolean(wifiOnlyAutoLoadMedia),
     isNative: Capacitor.isNativePlatform(),
@@ -1037,16 +1097,18 @@ export function ReaderScreen({
   const sourceHint = useMemo(() => {
     const origin =
       bodySource === 'feed'
-        ? '来自订阅源全文'
-        : bodySource === 'netease'
-          ? '来自网易正文接口'
-          : bodySource === 'readability'
-            ? '已在应用内抽取原文'
-            : bodySource === 'video'
-              ? '视频报道 · 应用内播放'
-              : bodySource === 'blocked'
-                ? '原站限制 · 仅摘要'
-                : null
+        ? '来自订阅源正文'
+        : bodySource === 'feed-excerpt'
+          ? '来自订阅源 · 完整性未确认'
+          : bodySource === 'netease'
+            ? '来自网易正文接口'
+            : bodySource === 'readability'
+              ? '已在应用内抽取原文'
+              : bodySource === 'video'
+                ? '视频报道 · 应用内播放'
+                : bodySource === 'blocked'
+                  ? '原站正文不可读取 · 仅摘要'
+                  : null
     if (!origin) return null
     return fromCache ? `${origin} · 离线缓存` : origin
   }, [bodySource, fromCache])
@@ -1505,7 +1567,7 @@ export function ReaderScreen({
                   className="mt-3.5 rounded-2xl border border-haze bg-ink-raised/80 p-3.5 text-[12.5px] leading-relaxed text-paper-muted"
                 >
                   <p className="text-paper">
-                    原站有付费墙或反爬限制，站内只能展示摘要。完整正文请在浏览器打开核对。
+                    原站正文暂不可读取，目前仅有订阅源摘要，可在浏览器核对原文。
                   </p>
                   <div className="mt-2.5 flex flex-wrap gap-2">
                     {(resolvedOriginUrl || article.originUrl) && (
@@ -1591,7 +1653,7 @@ export function ReaderScreen({
               )}
             </div>
 
-            {coverUrl && article.contentType !== 'video' && (
+            {showStandaloneCover && coverUrl && article.contentType !== 'video' && (
               <div className="mt-5 page-x lg:px-8">
                 <InkImage
                   src={coverUrl}

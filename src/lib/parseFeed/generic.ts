@@ -7,6 +7,8 @@ import { XMLBuilder, XMLParser } from 'fast-xml-parser'
 
 import type { NewsSource } from '../../sources/registry'
 import type { Article } from '../types'
+import { classifyFeedBody } from '../feedBodyEvidence'
+import { escapeHtml } from '../htmlText'
 import { hasArticleTextAlongsideVideo, isLikelyVideoArticleUrl } from '../videoArticle'
 import {
   asRecord,
@@ -58,6 +60,17 @@ function linkOfAtomEntry(node: Unknown): string {
   return text(node.link)
 }
 
+/** RSS/Atom and JSON Feed may carry plain text without any HTML tags.
+ * Keep the original paragraph and line structure, but escape it before
+ * treating it as HTML. The downstream sanitizer remains authoritative. */
+function feedValueToHtml(value: string, allowMarkup = true): string {
+  if (!value) return ''
+  if (allowMarkup && /<[a-z][\s\S]*?>/i.test(value)) return value
+  return value.split(/\r?\n[\t ]*\r?\n+/)
+    .map((chunk) => `<p>${escapeHtml(chunk).replace(/\r?\n/g, '<br>')}</p>`)
+    .join('')
+}
+
 /** Explicit media enclosures and video-page URLs denote video entries.
  * An inline <video>/<iframe> alone does not: written posts may include embeds.
  */
@@ -80,9 +93,10 @@ function parseJsonFeed(source: NewsSource, payload: string, fetchedAt: number): 
   for (const raw of items) {
     const node = asRecord(raw)
     if (!node) continue
-    const html =
-      text(node.content_html) ||
-      (text(node.content_text) ? `<p>${text(node.content_text)}</p>` : '')
+    const rawHtml = text(node.content_html)
+    const rawText = text(node.content_text)
+    const html = rawHtml ? feedValueToHtml(rawHtml) : feedValueToHtml(rawText, false)
+    const feedBodyEvidence = classifyFeedBody(html || text(node.summary), rawHtml || rawText ? 'content' : 'summary')
     const summaryText =
       text(node.summary) ||
       text(node.content_text) ||
@@ -98,6 +112,7 @@ function parseJsonFeed(source: NewsSource, payload: string, fetchedAt: number): 
         title: text(node.title),
         link,
         html,
+        feedBodyEvidence,
         summaryText,
         dateRaw: text(node.date_published) || text(node.date_modified),
         image,
@@ -167,9 +182,18 @@ export function parseXmlFeed(source: NewsSource, payload: string, fetchedAt: num
         if (Array.isArray(ordered?.[key])) xhtmlBodies.set(key, xhtmlBuilder.build(ordered[key]) as string)
       }
     }
-    const bodies = ['encoded', 'content', 'description', 'summary']
-      .flatMap((key) => xhtmlBodies.has(key) ? [xhtmlBodies.get(key)!] : toArray(node[key]).map(text)).filter(Boolean)
-    const html = bodies[0] ?? ''
+    const bodyFields = ['encoded', 'content', 'description', 'summary'] as const
+    const bodyValues = bodyFields.flatMap((key) =>
+      (xhtmlBodies.has(key) ? [xhtmlBodies.get(key)!] : toArray(node[key]).map(text))
+        .filter(Boolean).map((value) => ({ key, value })),
+    )
+    const bodies = bodyValues.map((body) => body.value)
+    const rawBody = bodies[0] ?? ''
+    const field = bodyValues[0]?.key
+    const atomType = isAtom && field ? text(asRecord(node[field])?.['@_type']).toLowerCase() : ''
+    const html = feedValueToHtml(rawBody, atomType !== 'text')
+    const feedBodyEvidence = classifyFeedBody(rawBody,
+      field === 'encoded' || (isAtom && field === 'content') ? 'content' : field === 'summary' ? 'summary' : 'description')
     const descriptionText = stripTags(
       text(pick(node, 'description', 'summary')) || html,
     )
@@ -191,6 +215,7 @@ export function parseXmlFeed(source: NewsSource, payload: string, fetchedAt: num
         title: text(node.title),
         link,
         html,
+        feedBodyEvidence,
         summaryText: descriptionText,
         dateRaw,
         image: imageOf(node, bodies.join('\n'), link),

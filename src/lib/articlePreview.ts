@@ -57,3 +57,11 @@ export function withArticlePreviewImage(article: Article, html: string, image?: 
   const cover = previewImageUrl(image, article.originUrl) ?? firstImageIn(html, article.originUrl)
   return cover ? { ...article, image: cover } : article
 }
+
+/** A syndicated story may declare the exact same image in list metadata and
+ * inside its body. Keep the author's inline order instead of duplicating it
+ * as a leading hero. Other cover images retain their normal placement. */
+export function shouldRenderStandaloneCover(image: string | undefined, html: string, baseUrl: string): boolean {
+  const cover = previewImageUrl(image, baseUrl)
+  return Boolean(cover) && firstImageIn(html, baseUrl) !== cover
+}

@@ -13,7 +13,7 @@ import { getRuntimeProxyPrefs } from '../http'
 import { normalizeContentImages } from '../normalizeImages'
 import { sanitizeArticleHtml } from '../sanitize'
 
-export type BodySource = 'feed' | 'readability' | 'netease' | 'video' | 'blocked'
+export type BodySource = 'feed' | 'feed-excerpt' | 'readability' | 'netease' | 'video' | 'blocked'
 
 export interface ResolvedBody {
   contentHtml: string

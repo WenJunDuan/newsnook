@@ -6,6 +6,8 @@
 import { findSource } from '../../sources/registry'
 import type { Article } from '../types'
 import { escapeHtml, stripTags } from '../htmlText'
+import { isPartialFeedTeaser } from '../feedBodyEvidence'
+export { isPartialFeedTeaser } from '../feedBodyEvidence'
 import type { ResolvedBody } from './shared'
 
 /**
@@ -80,7 +82,7 @@ export function buildBlockedPublisherFallback(
 ): ResolvedBody {
   const summary = article.summary?.trim()
   const note =
-    '<p><strong>原站暂不支持站内阅读</strong>（付费墙或反爬拦截）。完整正文请点右上角在浏览器打开。</p>'
+    '<p><strong>原站正文暂不可读取</strong>。可通过右上角浏览器核对原文。</p>'
   const summaryHtml =
     summary && summary.length >= 40
       ? `<p>${escapeHtml(summary)}</p>`
@@ -98,19 +100,6 @@ export function buildBlockedPublisherFallbackForTest(
   resolvedOriginUrl?: string,
 ): ResolvedBody {
   return buildBlockedPublisherFallback(article, resolvedOriginUrl)
-}
-
-/**
- * 英文站 RSS 常见「摘要 + 阅读全文」尾巴。命中则绝不当作站内全文，
- * 否则会跳过 Readability，只显示两段 teaser（如 Ars / Verge）。
- */
-const PARTIAL_FEED_CTA =
-  /read\s+(?:the\s+)?full\s+(?:story|article|post)|continue\s+reading|view\s+(?:the\s+)?full\s+article|阅读全文|查看全文|点击查看全文/i
-
-/** 是否像「摘要 Feed」（带阅读全文 CTA），用于丢弃误缓存 */
-export function isPartialFeedTeaser(html?: string): boolean {
-  if (!html) return false
-  return PARTIAL_FEED_CTA.test(stripTags(html))
 }
 
 /** Feed 自带内容是否已足够作为站内全文 */

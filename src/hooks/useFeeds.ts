@@ -495,6 +495,11 @@ export function useFeeds(
         // 下拉刷新重置窗口，避免旧全量缓存继续占内存 / 本地存储
         commitBucket(id, head)
         markBucketReady(id, head)
+        if (source.kind === 'feed' && head.length) {
+          void import('../lib/feedBodySnapshot').then(({ persistShortFeedSnapshots }) => {
+            void persistShortFeedSnapshots(head).catch(() => { /* optional local cache */ })
+          }).catch(() => { /* preserve successful list load */ })
+        }
         return head.length
       }
 
@@ -530,6 +535,14 @@ export function useFeeds(
       const merged = mergeHeadPage(existing, incoming)
       commitBucket(id, merged)
       markBucketReady(id, merged)
+      if (source.kind === 'feed' && incoming.length) {
+        // The visible list is already committed. Save a limited number of
+        // short full feed bodies in idle time so a post remains readable when
+        // its RSS item later falls out of the upstream window.
+        void import('../lib/feedBodySnapshot').then(({ persistShortFeedSnapshots }) => {
+          void persistShortFeedSnapshots(incoming).catch(() => { /* optional local cache */ })
+        }).catch(() => { /* don't interrupt successful feed refresh */ })
+      }
       return merged.length
     },
     [commitBucket, markBucketReady, updatePaging],

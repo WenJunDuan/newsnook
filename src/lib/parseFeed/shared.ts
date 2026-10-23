@@ -269,6 +269,7 @@ export function buildArticle(
     dateRaw: string
     image?: string
     contentType?: Article['contentType']
+    feedBodyEvidence?: Article['feedBodyEvidence']
     videoUrl?: string
     audioUrl?: string
     neteaseDocId?: string
@@ -288,6 +289,7 @@ export function buildArticle(
     title,
     summary,
     contentHtml: raw.html && raw.html.includes('<') ? raw.html : undefined,
+    feedBodyEvidence: raw.feedBodyEvidence,
     image: raw.image,
     publishedAt: published ?? fetchedAt,
     hasRealDate: published != null,

@@ -46,6 +46,7 @@
     "test:feed-pagination": "npx tsx scripts/feed-pagination.test.ts",
     "test:resolve-body-custom": "npx tsx scripts/resolve-body-custom-source.test.ts",
     "test:resolve-body-blocked": "npx tsx scripts/resolve-body-blocked.test.ts",
+    "test:feed-body-general": "npx tsx scripts/feed-body-general.test.ts",
     "test:source-picker": "npx tsx scripts/source-picker.test.ts",
     "test:refresh-progress": "rolldown scripts/refresh-progress.test.ts --platform=node --format=esm --file=node_modules/.cache/newsnook/refresh-progress.test.mjs && node node_modules/.cache/newsnook/refresh-progress.test.mjs",
     "test:browser": "node --import tsx scripts/browser-private-bookmarks.test.ts && node --experimental-test-module-mocks --import tsx scripts/browser-workspace.test.tsx && node --import tsx scripts/browser-product-panels.test.tsx && node --import tsx scripts/browser-preferences.test.ts && node --import tsx scripts/browser-search-catalog.test.ts && node --import tsx scripts/browser-desktop-viewport.test.ts && node --import tsx scripts/browser-userscripts.test.ts && node --import tsx scripts/browser-external-intent.test.ts && npm run test:browser-images && npm run test:browser-agent",
