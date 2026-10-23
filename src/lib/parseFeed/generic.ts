@@ -7,7 +7,7 @@ import { XMLBuilder, XMLParser } from 'fast-xml-parser'
 
 import type { NewsSource } from '../../sources/registry'
 import type { Article } from '../types'
-import { isLikelyVideoArticleUrl } from '../videoArticle'
+import { hasArticleTextAlongsideVideo, isLikelyVideoArticleUrl } from '../videoArticle'
 import {
   asRecord,
   audioUrlFromNode,
@@ -58,6 +58,20 @@ function linkOfAtomEntry(node: Unknown): string {
   return text(node.link)
 }
 
+/** Explicit media enclosures and video-page URLs denote video entries.
+ * An inline <video>/<iframe> alone does not: written posts may include embeds.
+ */
+function isVideoFeedEntry(
+  link: string,
+  html: string,
+  media: ReturnType<typeof videoMediaFromNode>,
+  explicitlyVideo = false,
+): boolean {
+  if (explicitlyVideo || isLikelyVideoArticleUrl(link) || media.declaredByFeed) return true
+  if (!media.directUrl && !media.playerPageUrl) return false
+  return !hasArticleTextAlongsideVideo(html)
+}
+
 function parseJsonFeed(source: NewsSource, payload: string, fetchedAt: number): Article[] {
   const data = JSON.parse(payload) as Unknown
   const items = toArray(data.items)
@@ -76,10 +90,7 @@ function parseJsonFeed(source: NewsSource, payload: string, fetchedAt: number): 
     const link = text(node.url) || text(node.external_url) || text(node.id)
     const image = imageOf(node, html, link)
     const video = videoMediaFromNode(node, html)
-    const contentType =
-      video.directUrl || video.playerPageUrl || isLikelyVideoArticleUrl(link)
-        ? 'video'
-        : undefined
+    const contentType = isVideoFeedEntry(link, html, video) ? 'video' : undefined
 
     const article = buildArticle(
       source,
@@ -92,7 +103,7 @@ function parseJsonFeed(source: NewsSource, payload: string, fetchedAt: number): 
         image,
         audioUrl: audioUrlFromNode(node, html),
         contentType,
-        videoUrl: video.directUrl,
+        videoUrl: contentType === 'video' ? video.directUrl : undefined,
       },
       fetchedAt,
     )
@@ -167,11 +178,12 @@ export function parseXmlFeed(source: NewsSource, payload: string, fetchedAt: num
     const video = videoMediaFromNode(node, html)
     // 虎嗅官方 RSS 用自定义 <type>video_article</type>；通用 Feed 则根据
     // enclosure / attachment / iframe / 明确的视频详情页识别，避免把播放器 DOM 当普通正文。
-    const contentType =
-      (source.id === 'huxiu' && text(node.type).toLowerCase() === 'video_article') ||
-      Boolean(video.directUrl || video.playerPageUrl || isLikelyVideoArticleUrl(link))
-        ? 'video'
-        : undefined
+    const contentType = isVideoFeedEntry(
+      link,
+      html,
+      video,
+      source.id === 'huxiu' && text(node.type).toLowerCase() === 'video_article',
+    ) ? 'video' : undefined
 
     const article = buildArticle(
       source,
@@ -184,7 +196,7 @@ export function parseXmlFeed(source: NewsSource, payload: string, fetchedAt: num
         image: imageOf(node, bodies.join('\n'), link),
         audioUrl: audioUrlFromNode(node, html),
         contentType,
-        videoUrl: video.directUrl,
+        videoUrl: contentType === 'video' ? video.directUrl : undefined,
       },
       fetchedAt,
     )
