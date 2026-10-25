@@ -448,10 +448,12 @@ function InkVideoPlayerReady({
   const hudTimerRef = useRef<number | null>(null)
   /** 音量 / 亮度手势进行中；松手后迟到的异步写入不能把淡出定时器冲掉。 */
   const levelingRef = useRef(false)
+  /** Discard obsolete native level-write feedback when a gesture becomes a pinch/cancel. */
+  const levelEpochRef = useRef(0)
   const levelsRef = useRef({ volume: 1, brightness: 1 })
   const levelWriteRef = useRef<{
     busy: boolean
-    pending: { kind: 'volume' | 'brightness'; value: number } | null
+    pending: { kind: 'volume' | 'brightness'; value: number; epoch: number } | null
   }>({ busy: false, pending: null })
 
   const [clock, setClock] = useState('')
@@ -1692,28 +1694,41 @@ function InkVideoPlayerReady({
    * 档位写入是异步的（原生桥或元素音量），滑动过程中只保留最后一个目标值，
    * 避免每个 pointermove 都排队一次调用。
    */
+  const invalidateLevelWrites = () => {
+    levelEpochRef.current++
+    levelWriteRef.current.pending = null
+    levelingRef.current = false
+  }
+
   const commitLevel = (kind: 'volume' | 'brightness', value: number) => {
     const queue = levelWriteRef.current
-    queue.pending = { kind, value }
+    queue.pending = { kind, value, epoch: levelEpochRef.current }
     if (queue.busy) return
     queue.busy = true
     void (async () => {
       while (queue.pending != null) {
         const next = queue.pending
         queue.pending = null
+        if (next.epoch !== levelEpochRef.current) continue
         const applied = await levelControl(next.kind).write(next.value)
-        showHud({ kind: next.kind, value: applied })
+        // Android writes may resolve after a second finger starts a pinch.
+        // Old values must never replace a zoom HUD or cancel its fade timer.
+        if (next.epoch === levelEpochRef.current) {
+          showHud({ kind: next.kind, value: applied })
+        }
       }
       queue.busy = false
-      // 松手后最后一次异步写入会取消 fade 定时器，这里重新排程淡出
-      if (!levelingRef.current) fadeHud()
+      // A stale native write must not dismiss an active pinch's zoom HUD.
+      if (!levelingRef.current && activePointersRef.current.size === 0) fadeHud()
     })()
   }
 
   /** 全屏下半屏才接管滑动；竖屏内嵌播放器保持原有的点按语义。 */
   const lockGesture = (gesture: GestureState, dx: number, dy: number) => {
     const axis = resolveGesture(dx, dy, gesture.localX, gesture.surface)
-    if (axis === 'none') return
+    // Vertical level gestures must work from the FIRST downward stroke anywhere
+    // on the fullscreen video. Only seeking stays restricted to the thumb zone.
+    if (axis === 'none' || (axis === 'seek' && !gesture.thumb)) return
     gesture.axis = axis
     levelingRef.current = axis === 'volume' || axis === 'brightness'
     const video = videoRef.current
@@ -1774,7 +1789,7 @@ function InkVideoPlayerReady({
         volumeControl.read(),
         brightnessControl.read(),
       ])
-      if (gestureRef.current !== gesture || gesture.axis !== 'none') return
+      if (multiTouchRef.current || gestureRef.current !== gesture || gesture.axis !== 'none') return
       levelsRef.current = { volume, brightness }
     })()
   }
@@ -1791,6 +1806,7 @@ function InkVideoPlayerReady({
       multiTouchRef.current = true
       clearGestureTimers()
       endBoost()
+      invalidateLevelWrites()
       gestureRef.current.moved = true
       gestureRef.current.axis = 'none'
       pinchRef.current = {
@@ -1815,17 +1831,16 @@ function InkVideoPlayerReady({
     }
     gestureRef.current = gesture
     clearGestureTimers()
-    if (videoViewRef.current.scale === 1) {
-      longPressTimerRef.current = window.setTimeout(startBoost, LONG_PRESS_MS)
-    }
-    if (gesture.thumb) syncLevels(gesture)
+    // Zoom is a viewing transform, not a reason to disable long-press boost.
+    // Starting a pinch or moving past touch slop cancels this timer below.
+    longPressTimerRef.current = window.setTimeout(startBoost, LONG_PRESS_MS)
+    if (immersive) syncLevels(gesture)
   }
 
   const onGesturePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!activePointersRef.current.has(event.pointerId)) return
     const { point } = pointerLocation(event)
-    if (activePointersRef.current.has(event.pointerId)) {
-      activePointersRef.current.set(event.pointerId, point)
-    }
+    activePointersRef.current.set(event.pointerId, point)
     if (multiTouchRef.current) {
       const pair = pointerPair()
       const pinch = pinchRef.current
@@ -1854,7 +1869,7 @@ function InkVideoPlayerReady({
       gesture.moved = true
       clearGestureTimers()
     }
-    if (!gesture.thumb) return
+    if (!immersive) return
 
     if (gesture.axis === 'none') lockGesture(gesture, dx, dy)
     if (gesture.axis === 'none') return
@@ -1862,38 +1877,27 @@ function InkVideoPlayerReady({
   }
 
   const onGesturePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (compactRef.current) return
+    if (compactRef.current || !activePointersRef.current.has(event.pointerId)) return
+    const { point } = pointerLocation(event)
+    // Remove first: releasePointerCapture may immediately raise lostpointercapture.
+    activePointersRef.current.delete(event.pointerId)
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
-    const { point } = pointerLocation(event)
-    activePointersRef.current.delete(event.pointerId)
     clearGestureTimers()
     if (multiTouchRef.current) {
       if (activePointersRef.current.size < 2) {
         pinchRef.current = null
-        multiTouchRef.current = false
         setViewInteracting(false)
       }
+      // A pinch remains a multi-touch transaction until ALL fingers lift.
+      // Reclassifying the last finger as a tap loses the HUD fade and can
+      // accidentally toggle controls or consume the following long-press.
       if (activePointersRef.current.size === 0) {
+        multiTouchRef.current = false
+        gestureRef.current = { ...IDLE_GESTURE }
         fadeHud()
         revealControls()
-      } else {
-        const [remaining] = activePointersRef.current.values()
-        if (remaining) {
-          const surface = videoSurfaceForRotation(viewport, videoViewRef.current.rotation)
-          gestureRef.current = {
-            ...IDLE_GESTURE,
-            x: remaining.x,
-            y: remaining.y,
-            localX: remaining.x,
-            at: Date.now(),
-            thumb: immersive && isThumbZone(remaining.y, surface.height),
-            surface,
-            fromView: videoViewRef.current,
-          }
-          if (gestureRef.current.thumb) syncLevels(gestureRef.current)
-        }
       }
       return
     }
@@ -1950,22 +1954,24 @@ function InkVideoPlayerReady({
   }
 
   const onGesturePointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    }
+    const capturedIds = Array.from(activePointersRef.current.keys())
     activePointersRef.current.clear()
+    // Cancel can arrive for just one finger of a pinch. Release the others too.
+    // Clearing the registry first prevents recursive lostpointercapture handling.
+    for (const id of capturedIds) {
+      if (event.currentTarget.hasPointerCapture(id)) event.currentTarget.releasePointerCapture(id)
+    }
     pinchRef.current = null
     multiTouchRef.current = false
     setViewInteracting(false)
     clearGestureTimers()
-    const gesture = gestureRef.current
-    if (gesture.axis !== 'none') {
-      // 取消不提交进度，只收掉 HUD
-      gesture.axis = 'none'
-      levelingRef.current = false
-      fadeHud()
-    }
+    invalidateLevelWrites()
+    gestureRef.current = { ...IDLE_GESTURE }
+    // Android may deliver pointercancel during multi-touch, including when
+    // axis === none. Zoom/volume HUDs must always receive a dismissal timer.
+    fadeHud()
     endBoost()
+    revealControls()
   }
 
   const progress = duration > 0 ? current / duration : 0
@@ -2067,6 +2073,9 @@ function InkVideoPlayerReady({
             onPointerMove={onGesturePointerMove}
             onPointerUp={onGesturePointerUp}
             onPointerCancel={onGesturePointerCancel}
+            onLostPointerCapture={event => {
+              if (activePointersRef.current.has(event.pointerId)) onGesturePointerCancel(event)
+            }}
             onContextMenu={(event) => event.preventDefault()}
           />
         )}

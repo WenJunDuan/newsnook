@@ -105,3 +105,26 @@ npm run test:ink-player-v2-visual
 保留一个视觉主角：视频画面。减少重复标题、无意义透明面板以及固定在页面边缘的多余功能入口。控制层仅在主动唤出或暂停时出现；触控 / 菜单状态保留反馈，不让加载遮罩盖住正在拖动的画面。
 
 动效包括：控制栏淡入淡出、时间轴拖动响应、控件触碰缩放；开启系统「减少动态效果」时关闭非必需过渡。已进行人工截图自检；本分支未由独立视觉评审者打分。
+
+## 手势状态机根因修复（2026-10-25）
+
+![Chromium 实际触摸：向下调亮度、双指缩放 HUD、最后一指松开后消失](./evidence/ink-player-v2/gesture-regression.jpg)
+
+本轮是 **播放器事件状态修复**，不是调整 HUD 的透明度或动画：
+
+1. **双指 HUD 不消失**：旧代码在第一根手指抬起时就清空 `multiTouchRef`；随后第二根手指抬起被误归类为普通单指结束，未执行 `fadeHud()`。现在多指事务一直保持到最后一个 pointerup，才统一恢复控件并启动 HUD 淡出。
+2. **取消事件遗漏**：Android `pointercancel` / 意外失去 `pointercapture` 时，旧代码只处理已经锁定进度/音量轴的 HUD，双指缩放的 `axis: none` 不会淡出。现在取消事件始终清理全部指针、释放所有捕获、重置多指/长按/亮度状态并淡出 HUD；延迟到来的终止事件被忽略。
+3. **原生异步写入竞态**：亮度/音量桥接写入结束可能晚于第二根手指按下，旧回调通过 `showHud` 把新缩放 HUD 覆盖、并重置旧定时器。现在用单调递增的手势 epoch 标记原生写入，只有当前事务才允许更新 HUD；触摸未结束时，过期请求也不再启动干扰性淡出。
+4. **缩放后长按失效**：旧代码以 `videoView.scale === 1` 为启动长按计时器的条件。现在取消该条件，长按可在放大画面上触发，移动超过触控阈值及出现第二根手指仍会取消加速，松手恢复用户原有倍速。
+5. **第一次向下滑不响应**：亮度/音量以前只在视频下半屏开始滑动时接受手势；从上半屏直接下滑无法锁定。现在全屏左/右半屏的竖向滑动均可直接启动亮度/音量调节，横向进度调整仍限定原下半屏区域，避免误触。
+
+### 回归证据
+
+- `scripts/ink-player-gesture-regression.test.tsx`：通过真实 React PointerEvent 分发覆盖首次向下、双指依次抬起、缩放后长按加速、pointercancel、lostpointercapture、意外残留终止事件，以及 HUD 过期收尾。
+- `scripts/ink-player-native-gesture-regression.test.tsx`：通过可控延迟原生媒体控制桥验证“亮度写入仍在进行 → 第二指加入 → 缩放 HUD 显示 → 迟到的写入返回 → HUD 不被覆盖 → 最后一指松开后清除”。
+- `scripts/ink-player-v2-visual.cjs`：Chromium DevTools 真实 `Input.dispatchTouchEvent`，844×390 横屏全屏中先向下调亮度/音量、双指缩放、按顺序松开两个指头，验证 HUD 都自动消失。
+- `npm run test:ink-player-v2`：关键回归连续三轮通过；`npm run test:video-player`：完整播放器聚合测试通过；类型检查、Lint 和 WebView 兼容检查通过。
+
+**Android 验证范围**：在独立 Android 12 / WebView 91 模拟器中已编译安装临时 QA APK、显示全屏播放器；模拟器发生 System UI ANR，且该设备的 WebView 远程调试接口无法实际注入触摸事件，因此不能将这次 Android 多指注入记作通过。生产逻辑在真实 Chromium PointerEvent 和原生桥异步模拟环境下完成验收。未使用连接的个人手机；临时 QA 页面已从正式源码删除。
+
+代码只在 `feat/ink-player-v2-ui` 开发与提交，不合并 `beta`、不发版。

@@ -60,7 +60,7 @@
     "test:dlna-cast": "npx tsx scripts/dlna-cast-lifecycle.test.ts",
     "test:origin-player-live-sniff": "npx tsx scripts/origin-player-live-sniff.test.ts",
     "test:ink-video-lifecycle": "tsx scripts/ink-video-lifecycle.test.tsx",
-    "test:ink-player-v2": "tsx --tsconfig tsconfig.app.json scripts/ink-player-v2-hud.test.tsx && tsx --tsconfig tsconfig.app.json scripts/ink-player-v2-interactions.test.tsx",
+    "test:ink-player-v2": "tsx --tsconfig tsconfig.app.json scripts/ink-player-v2-hud.test.tsx && tsx --tsconfig tsconfig.app.json scripts/ink-player-v2-interactions.test.tsx && tsx --tsconfig tsconfig.app.json scripts/ink-player-gesture-regression.test.tsx && tsx --tsconfig tsconfig.app.json scripts/ink-player-native-gesture-regression.test.tsx",
     "test:ink-player-v2-visual": "node scripts/ink-player-v2-visual.cjs",
     "test:floating-video": "tsx scripts/floating-video-session.test.ts && tsx scripts/floating-video-geometry.test.ts && tsx scripts/floating-video-native-coordinator.test.ts && tsx scripts/floating-video-lifecycle.test.tsx",
     "test:ink-video-live-updates": "tsx scripts/ink-video-live-updates.test.tsx",

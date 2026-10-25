@@ -7,6 +7,7 @@ const path = require('node:path')
 const chrome = process.env.CHROME_PATH ||
   (process.platform === 'win32' ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' : 'google-chrome')
 const port = 9241
+const previewPort = Number(process.env.INK_PLAYER_PREVIEW_PORT || 5179)
 const evidenceDir = path.resolve('evidence/ink-player-v2')
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'ink-player-v2-cdp-'))
 const args = ['--headless=new', '--disable-gpu', '--disable-extensions', '--no-first-run',
@@ -56,7 +57,7 @@ async function main(){
     await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<500})
     await send('Page.navigate',{url:'about:blank'})
     await pause(160)
-    await send('Page.navigate',{url:`http://127.0.0.1:5179/scripts/fixtures/ink-player-v2/preview.html?scene=${scene}`})
+    await send('Page.navigate',{url:`http://127.0.0.1:${previewPort}/scripts/fixtures/ink-player-v2/preview.html?scene=${scene}`})
     let ready = false
     for (let probe = 0; probe < 35; probe++) {
       ready = await evaluate(`location.search.includes('scene=${scene}') && Boolean(document.querySelector('[data-video-stage] video'))`)
@@ -93,6 +94,48 @@ async function main(){
     await setup(844,390)
     await click('button[aria-label="全屏"]')
     await screenshot('landscape-fullscreen-cdp')
+    // Browser compositor proof: real touch events, including first-stroke downward
+    // drags and a two-finger pinch with separate finger release events.
+    await send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:2})
+    const gestureBox = JSON.parse(await evaluate(`JSON.stringify((()=>{const r=document.querySelector('[data-video-gesture-surface]')?.getBoundingClientRect();return r?{left:r.left,top:r.top,width:r.width,height:r.height}:null})())`))
+    if (!gestureBox || gestureBox.width < 100) throw new Error('Missing fullscreen gesture surface')
+    const pt=(id,x,y)=>({id,x:Math.round(gestureBox.left+gestureBox.width*x),y:Math.round(gestureBox.top+gestureBox.height*y)})
+    const touch=async(type,points)=>{
+      await send('Input.dispatchTouchEvent',{type,touchPoints:points})
+      await pause(90)
+    }
+    const getHud=async()=>await evaluate("document.querySelector('[data-ink-hud]')?.getAttribute('data-ink-hud') || ''")
+    await touch('touchStart',[pt(1,.15,.22)])
+    await touch('touchMove',[pt(1,.15,.40)])
+    if (await getHud() !== 'brightness') throw new Error('First downward left stroke must immediately adjust brightness')
+    await screenshot('touch-brightness-down-cdp')
+    await touch('touchEnd',[])
+    await pause(640)
+    if(await getHud())throw new Error('Brightness HUD did not dismiss')
+
+    await touch('touchStart',[pt(2,.82,.22)])
+    await touch('touchMove',[pt(2,.82,.42)])
+    if(await getHud()!=='volume')throw new Error('First downward right stroke must immediately adjust volume')
+    await touch('touchEnd',[])
+    await pause(640)
+    if(await getHud())throw new Error('Volume HUD did not dismiss')
+    // Restore the fallback brightness before recording the separate zoom case.
+    await touch('touchStart',[pt(5,.18,.49)])
+    await touch('touchMove',[pt(5,.18,.14)])
+    await touch('touchEnd',[])
+    await pause(650)
+
+    await touch('touchStart',[pt(3,.41,.52)])
+    await touch('touchStart',[pt(3,.41,.52),pt(4,.59,.52)])
+    await touch('touchMove',[pt(3,.36,.52),pt(4,.68,.52)])
+    if(await getHud()!=='center')throw new Error('Pinch did not show a zoom HUD')
+    await screenshot('touch-zoom-hud-cdp')
+    await touch('touchEnd',[pt(4,.68,.52)])
+    await touch('touchEnd',[])
+    await pause(700)
+    if(await getHud())throw new Error('Zoom HUD did not dismiss after all fingers lifted')
+    await screenshot('touch-zoom-dismissed-cdp')
+    await send('Emulation.setTouchEmulationEnabled',{enabled:false})
     if(await evaluate(`Boolean(document.querySelector('button[aria-label="媒体资源"]'))`)){
       await click('button[aria-label="媒体资源"]')
       await screenshot('landscape-sources-cdp')
