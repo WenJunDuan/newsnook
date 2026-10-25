@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Bot, Film, Home, LogOut, MoreHorizontal, RefreshCw, X } from 'lucide-react'
+import { BotMessageSquare, Film, Home, LogOut, MoreHorizontal, Play, RefreshCw, X } from 'lucide-react'
 import '../../../src/index.css'
 import '../../../src/features/browser/browser.css'
 import { BrowserAddressBar, BrowserMediaStrip } from '../../../src/features/browser/BrowserAddressBar'
@@ -10,7 +10,7 @@ const params = new URLSearchParams(location.search)
 const initial = Number(params.get('count') ?? '2')
 const top = params.get('position') === 'top'
 const current='https://cilixiong.com/movies/pegasus-2'
-function Preview() {
+export function Preview() {
   const [count, setCount] = useState(Number.isFinite(initial) ? initial : 0)
   const [panel, setPanel] = useState(false)
   const [address, setAddress] = useState(false)
@@ -26,12 +26,12 @@ function Preview() {
         onOpenSite={()=>{}} onSearch={()=>setAddress(true)} onOpenMedia={()=>setPanel(true)}/>
       <BrowserIconButton label="刷新" onClick={()=>{}}><RefreshCw size={19}/></BrowserIconButton>
       <BrowserIconButton label="标签页" onClick={()=>{}}><span className="flex size-[18px] items-center justify-center rounded-[4px] border-[1.5px] border-current text-[10.5px] font-bold">1</span></BrowserIconButton>
-      <BrowserIconButton label="AI 浏览助手" className="browser-toolbar-compact-optional" onClick={()=>{}}><Bot size={20}/></BrowserIconButton>
+      <BrowserIconButton label="AI 浏览助手" className="browser-toolbar-compact-optional" onClick={()=>{}}><BotMessageSquare size={22} strokeWidth={1.9} aria-hidden="true"/></BrowserIconButton>
       <BrowserIconButton label="网页工具" onClick={()=>{}}><MoreHorizontal size={20}/></BrowserIconButton>
     </div>
     {top && <BrowserMediaStrip count={count} open={panel} onOpen={()=>setPanel(true)}/>}
   </nav>
-  return <div data-theme="dark" className="browser-workspace fixed inset-0 z-[95] flex min-w-0 flex-col overflow-hidden bg-ink text-paper">
+  return <div data-theme={params.get('theme') === 'light' ? 'light' : 'dark'} className="browser-workspace fixed inset-0 z-[95] flex min-w-0 flex-col overflow-hidden bg-ink text-paper">
     {!top && <div style={{height:15,background:'var(--color-ink)'}}/>}
     {top && toolbar}
     <div data-browser-viewport className="relative min-h-0 flex-1 overflow-hidden" style={{background:'#222428'}}>
@@ -53,7 +53,7 @@ function Preview() {
     </div>
     {panel && <BrowserSheet title="媒体资源" onClose={()=>setPanel(false)}>
       <div className="mb-3 flex items-center justify-between text-[13px] text-paper-muted"><span>发现 {count} 个资源</span><span>重新扫描</span></div>
-      {Array.from({length:Math.min(count,3)}).map((_,i)=><div key={i} className="flex min-h-[74px] items-center gap-3 border-b border-haze py-3"><Film size={20}/><div className="min-w-0 flex-1 text-[14px]">视频文件 · {1080-i*360}p</div><button onClick={()=>setPanel(false)} className="rounded-xl bg-paper px-4 py-2 text-[13px] text-ink">播放</button></div>)}
+      {Array.from({length:Math.min(count,3)}).map((_,i)=><div key={i} className="flex min-h-[74px] items-center gap-3 border-b border-haze py-3"><Film size={20}/><div className="min-w-0 flex-1 text-[14px]">视频文件 · {1080-i*360}p</div><button type="button" aria-label={'播放 视频文件 · ' + (1080-i*360) + 'p'} onClick={()=>setPanel(false)} className="browser-media-play"><Play size={17} strokeWidth={1.8} aria-hidden="true"/>播放</button></div>)}
     </BrowserSheet>}
     {address && <div role="dialog" aria-label="搜索与地址" style={{position:'absolute',inset:0,background:'rgba(0,0,0,.6)',display:'grid',placeItems:'center'}}><button onClick={()=>setAddress(false)}><X/>搜索与地址</button></div>}
   </div>

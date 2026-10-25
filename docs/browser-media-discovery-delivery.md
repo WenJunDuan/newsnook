@@ -67,3 +67,13 @@ npm run build
 ```
 
 视觉合辑可见 `docs/evidence/browser-media-discovery/android-proof.jpg`。本轮以真实浏览器和 Android 截图自检，未调用独立视觉评审员评分。
+
+## 浏览器控件的第二轮视觉精修
+
+![浅色主题 · 媒体列表](./evidence/browser-media-discovery/media-list-light.png)
+
+![浅色主题 · 浏览器工具栏](./evidence/browser-media-discovery/toolbar-light.png)
+
+- **媒体资源列表的「播放」**：将高对比度填充按钮改为主题语义色衍生的低对比度表面，1px 细轮廓，图标为 17px/1.8 描边；保持 44px 可触达高度和原本的点击播放行为。视觉重心回到资源名称，不再出现醒目的黑色实心块。
+- **AI 浏览助手的工具栏图标**：从内部留白较多的 `Bot 20px/1.8` 换成 `BotMessageSquare 22px/1.9`，点击区域仍为 44×44px，菜单项与工具栏保持同一语义图标；原有任务角标与展开行为不受影响。
+- **验收**：在 Chrome 393×852、320×740、700×852 的真实 React 组件界面验证；浅色主题播放按钮颜色 `rgb(26,24,21)`、表面 `rgba(26,24,21,.043)`、边框约 12% 透明度，44px 触控高度；深色主题同样使用语义 token。更新了浏览器工作区单测对按钮样式和 AI 图标尺寸的断言，连续三轮通过，类型、Lint、WebView CSS 兼容检查通过。此次是局部视觉精修，未额外执行 Android 原生设备重测或独立视觉评审。

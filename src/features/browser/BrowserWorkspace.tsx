@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bookmark, BookmarkCheck, ChevronRight, Clock3, Copy,
   Download, Film, Globe2, Home, Images, Laptop, LogOut, ScanText, Share2, Shield,
-  MoreHorizontal, Pencil, Play, Plus, RefreshCw, Settings2, ShieldCheck, Square, Trash2, X, Bot,
+  MoreHorizontal, Pencil, Play, Plus, RefreshCw, Settings2, ShieldCheck, Square, Trash2, X, BotMessageSquare,
 } from 'lucide-react'
 import { Share } from '@capacitor/share'
 import {createBrowserConfigController} from './agent/browserConfig'
@@ -428,7 +428,7 @@ export function BrowserWorkspace({
     {label:'下载管理', icon:Download, action:() => runCommand('downloads')},
     {label:'主页', icon:Home, action:goHome, disabled:session.pending},
     {label:'媒体资源', icon:Film, action:openMediaPanel, disabled:!active, badge:currentResources.length ? String(currentResources.length) : undefined},
-    {label:'AI 浏览助手', icon:Bot, action:()=>{setPanel(null);setAgentMinimized(false);setAgentOpen(true)}},
+    {label:'AI 浏览助手', icon:BotMessageSquare, action:()=>{setPanel(null);setAgentMinimized(false);setAgentOpen(true)}},
     {label:'用户脚本', icon:ShieldCheck, action:() => openPanel('scripts'), badge:active ? String(session.state.activeScriptCount ?? 0) : undefined},
     {label:'脚本菜单', icon:Settings2, action:() => runCommand('scriptMenu'), disabled:!active},
     {label:'新建标签', icon:Plus, action:() => runCommand('new'), disabled:session.tabs.length >= 6},
@@ -461,7 +461,7 @@ export function BrowserWorkspace({
         setPanel(null)
         if (!agentOpen) {setAgentOpen(true);setAgentMinimized(false)}
         else setAgentMinimized(value=>!value)
-      }} pressed={agentOpen&&!agentMinimized}><span className="relative"><Bot size={20} strokeWidth={1.8}/>
+      }} pressed={agentOpen&&!agentMinimized}><span className="relative inline-flex items-center justify-center"><BotMessageSquare size={22} strokeWidth={1.9} aria-hidden="true"/>
           {agentBusy&&<span aria-hidden="true" className="absolute -right-1 -top-1 size-[6px] rounded-full bg-cinnabar"/>}
         </span></BrowserIconButton>
       <BrowserIconButton label="网页工具" onClick={() => openPanel(panel === 'menu' ? null : 'menu')}><MoreHorizontal size={20} strokeWidth={1.8}/></BrowserIconButton>
@@ -602,7 +602,7 @@ export function BrowserWorkspace({
         <Film size={21} className="shrink-0 text-paper-muted"/>
         <div className="min-w-0 flex-1"><p className="text-[14px] font-medium">{browserResourceTitle(resource)}</p><p className="mt-1 truncate text-[12px] text-paper-muted">{browserHostLabel(resource.url) || browserHostLabel(resource.pageUrl || '')}</p></div>
         <button type="button" aria-label={'播放 ' + browserResourceTitle(resource)} onClick={() => {setPlayError(''); setPlaying({resource, resources:currentResources, title, selection:++playbackSelection.current, tabId:session.state.tabId}); setPanel(null)}}
-          className="flex min-h-11 items-center gap-1.5 rounded-xl bg-paper px-3 text-[13px] font-medium text-ink"><Play size={16}/>播放</button>
+          className="browser-media-play"><Play size={17} strokeWidth={1.8} aria-hidden="true"/>播放</button>
       </li>)}</ul> : <div className="flex min-h-40 flex-col items-center justify-center text-paper-muted"><Film size={30} strokeWidth={1.4}/><p className="mt-4 text-[14px]">暂未发现可播放资源</p></div>}
     </BrowserSheet>}
 

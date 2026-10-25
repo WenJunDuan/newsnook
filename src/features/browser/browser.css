@@ -307,6 +307,20 @@ html[data-scheme='buer'] .browser-workspace svg.lucide[fill='none'] { fill: none
 .browser-sheet-header { display: flex; align-items: center; flex-shrink: 0; min-height: 58px; padding: 4px 12px 4px 18px; }
 .browser-sheet-header h2 { min-width: 0; flex: 1; margin-right: 10px; }
 .browser-sheet-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 8px; }
+/* Media choices belong to the content row, not a prominent filled primary CTA. */
+.browser-media-play {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; gap: 7px;
+  min-height: 44px; padding: 0 12px;
+  border: 1px solid rgb(var(--tone-paper-rgb) / .12); border-radius: 11px;
+  color: var(--color-paper); background: rgb(var(--tone-paper-rgb) / .045);
+  font-size: 13px; line-height: 1.4; font-weight: 500; white-space: nowrap;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+.browser-media-play svg { flex-shrink: 0; }
+.browser-media-play:active { background: var(--color-haze); }
+@media (hover: hover) {
+  .browser-media-play:hover { background: var(--color-haze); border-color: rgb(var(--tone-paper-rgb) / .19); }
+}
 .browser-toolbar { flex-shrink: 0; background: var(--color-ink-raised); }
 .browser-toolbar-row { min-height: 56px; }
 .browser-address { min-height: 44px; border-radius: 14px; }
