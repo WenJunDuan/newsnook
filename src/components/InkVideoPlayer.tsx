@@ -2123,19 +2123,24 @@ function InkVideoPlayerReady({
           </div>
         )}
 
-        {ready && !fatal && !playing && !waiting && showChrome && (
+        {ready && !fatal && !waiting && ((!playing && showChrome) || (compact && !gestureHud)) && (
           <button
             type="button"
-            aria-label="播放"
+            aria-label={playing ? '暂停' : '播放'}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation()
               void togglePlay()
             }}
-            className="ink-video-abs-center z-[5] flex h-14 w-14 items-center justify-center rounded-full border border-paper/20 bg-black/45 text-paper shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md"
+            className={`ink-video-abs-center ${compact ? 'ink-video-mini-toggle' : ''} z-[5] flex h-14 w-14 items-center justify-center rounded-full border border-paper/20 bg-black/45 text-paper shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md`}
           >
-            <Play size={25} strokeWidth={1.6} className="ml-1" fill="currentColor" fillOpacity={0.16} />
+            {playing
+              ? <Pause size={23} strokeWidth={1.7} fill="currentColor" fillOpacity={0.12} />
+              : <Play size={25} strokeWidth={1.6} className="ml-1" fill="currentColor" fillOpacity={0.16} />}
           </button>
+        )}
+        {compact && ready && !fatal && duration > 0 && !showChrome && (
+          <div data-mini-progress="" aria-hidden="true"><span style={{ width: `${progress * 100}%` }} /></div>
         )}
 
         {gestureHud && <GestureHudOverlay hud={gestureHud} duration={duration} />}

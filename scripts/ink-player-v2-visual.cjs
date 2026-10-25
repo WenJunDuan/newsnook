@@ -99,6 +99,19 @@ async function main(){
     }
     await setup(1180,850,'floating')
     await screenshot('floating-cdp')
+    await setup(393,852,'floating')
+    await pause(2850)
+    const floatMetrics = JSON.parse(await evaluate(`JSON.stringify((()=>{const f=document.querySelector('[data-floating-video-window]');const s=f?.querySelector('[data-video-stage]');const r=f?.getBoundingClientRect();const sr=s?.getBoundingClientRect();return {width:r?.width,height:r?.height,stageHeight:sr?.height,titlebar:Boolean(f?.querySelector('.floating-video-titlebar')),actions:f?.querySelectorAll('.floating-video-actions button').length,resize:Boolean(f?.querySelector('[aria-label="调整悬浮窗口大小"]')),seekRight:f?.querySelector('.ink-seek')?.getBoundingClientRect().right,resizeLeft:f?.querySelector('.floating-video-resize')?.getBoundingClientRect().left}})())`))
+    console.log('mobile floating geometry',JSON.stringify(floatMetrics))
+    if (!floatMetrics.width || Math.abs(floatMetrics.height-floatMetrics.width*9/16)>2 || Math.abs(floatMetrics.height-floatMetrics.stageHeight)>2 || floatMetrics.titlebar || floatMetrics.actions!==2 || !floatMetrics.resize || floatMetrics.seekRight > floatMetrics.resizeLeft+1) throw new Error('Floating player geometry, controls or seek/resize zones overlap')
+    await screenshot('mobile-floating-cdp')
+    const didPlay = await evaluate(`(async()=>{const video=document.querySelector('[data-floating-video-window] video');if(!video)return false;video.muted=true;try{await video.play();return !video.paused}catch{return false}})()`)
+    if (didPlay) {
+      await pause(2950)
+      const isHidden=await evaluate(`document.querySelector('[data-floating-video-window]')?.dataset.floatingChrome==='hidden'`)
+      if(!isHidden)throw new Error('Floating controls should fade away during uninterrupted playback')
+      await screenshot('mobile-floating-playing-cdp')
+    }
     await setup(1180,850,'page')
     await screenshot('standalone-cdp')
     const pageResources = await evaluate("JSON.stringify({button:Boolean(document.querySelector('button[aria-label=\"媒体资源\"]')),fab:Boolean(document.querySelector('.ink-player-resource-fab')),duplicatedTitle:!!document.querySelector('[data-video-page=\"true\"] .ink-video-title') && getComputedStyle(document.querySelector('[data-video-page=\"true\"] .ink-video-title')).display !== 'none'})")

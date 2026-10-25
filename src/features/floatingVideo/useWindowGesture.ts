@@ -75,7 +75,7 @@ export function useWindowGesture(rootRef: RefObject<HTMLDivElement | null>, slot
   useEffect(() => {
     if (hidden) { setTip(false); return }
     if (!tip) return
-    const timer = window.setTimeout(() => setTip(false), 6000)
+    const timer = window.setTimeout(() => setTip(false), 2600)
     return () => window.clearTimeout(timer)
   }, [hidden, tip])
   useEffect(() => {
