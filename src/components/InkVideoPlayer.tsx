@@ -15,6 +15,9 @@ import {
   Cast,
   ChevronLeft,
   PictureInPicture2,
+  ListVideo,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
 import { VideoSessionManagerContext, useHasGlobalVideoSurface, useVideoPresentation } from '../features/floatingVideo/context'
 import type { VideoSessionManager } from '../features/floatingVideo/session'
@@ -100,6 +103,8 @@ import {
 } from './inkVideoPlayer/MediaResourceOverlay'
 import { PlayerBatteryIcon } from './inkVideoPlayer/PlayerBatteryIcon'
 import { PlayerTitle } from './inkVideoPlayer/PlayerTitle'
+import { PlayerSourceSheet } from './inkVideoPlayer/PlayerSourceSheet'
+import { PlayerRotationMenu } from './inkVideoPlayer/PlayerRotationMenu'
 import { useCastControls } from './inkVideoPlayer/useCastControls'
 
 export interface InkVideoPlayerProps {
@@ -309,11 +314,12 @@ export function InkVideoPlayerRuntime({
     ...(extraUrls ?? []),
   ]))
   const activeFormat = playableFormatForUrl(active?.url || src, active?.type || format)
-  const playerKey = playbackIdentity(active?.url || src, activeFormat)
+  // Keep the React runtime mounted across source changes. Its media effect
+  // already tears down/recreates the decoder; remounting the component would
+  // unexpectedly exit fullscreen and discard the user's presentation mode.
   const player = (
     <InkVideoPlayerReady
       autoPlay={autoPlay}
-      key={playerKey}
       src={active?.url || src}
       poster={poster}
       title={title}
@@ -365,7 +371,6 @@ export function InkVideoPlayerRuntime({
         >
           <InkVideoPlayerRuntime
             mediaPageHost={false}
-            key={playbackIdentity(mediaPage.active.url, mediaPage.active.type)}
             src={mediaPage.active.url}
             poster={poster}
             title={title}
@@ -465,7 +470,7 @@ function InkVideoPlayerReady({
   const [ready, setReady] = useState(false)
   const [fatal, setFatal] = useState<string | null>(null)
   const [hint, setHint] = useState<string | null>(null)
-  const [, setMuted] = useState(false)
+  const [muted, setMuted] = useState(false)
   const [current, setCurrent] = useState(0)
   const [duration, setDuration] = useState(0)
   const [buffered, setBuffered] = useState(0)
@@ -477,6 +482,7 @@ function InkVideoPlayerReady({
   const [seeking, setSeeking] = useState(false)
   const [rate, setRate] = useState(1)
   const [rateMenuOpen, setRateMenuOpen] = useState(false)
+  const [rotationMenuOpen, setRotationMenuOpen] = useState(false)
   const [resourceMenuOpen, setResourceMenuOpen] = useState(false)
   const [playerToast, setPlayerToast] = useState<string | null>(null)
   const [boosting, setBoosting] = useState(false)
@@ -589,7 +595,8 @@ function InkVideoPlayerReady({
     showPlayerToast,
   })
   const ownedOverlays = Boolean(overlayContainer?.isConnected)
-  const hideResourceFab = suppressResourceFab || compact || (globalVideoSurface && presentation?.mode === 'inline')
+  const integratedSourcePicker = Boolean((immersive || presentation?.mode === 'page') && resourceOptions.length > 0 && onSelectResource)
+  const hideResourceFab = suppressResourceFab || compact || presentation?.mode === 'page' || (globalVideoSurface && presentation?.mode === 'inline')
   const fullscreenFocus = useBrowserDialogFocus<HTMLDivElement>(ownedOverlays && immersive)
   const resourceFocus = useBrowserDialogFocus<HTMLDivElement>(
     ownedOverlays && resourceMenuOpen && !immersive && !hideResourceFab && resourceOptions.length > 0,
@@ -604,6 +611,7 @@ function InkVideoPlayerReady({
     if (castOpen) { setCastOpen(false); return true }
     if (resourceMenuOpen) { setResourceMenuOpen(false); return true }
     if (rateMenuOpen) { setRateMenuOpen(false); return true }
+    if (rotationMenuOpen) { setRotationMenuOpen(false); return true }
     return false
   })
 
@@ -1375,6 +1383,14 @@ function InkVideoPlayerReady({
 
 
 
+  const toggleMute = () => {
+    const video = videoRef.current
+    if (!video) return
+    video.muted = !video.muted
+    setMuted(video.muted)
+    showPlayerToast(video.muted ? '已静音' : '已取消静音')
+  }
+
   const onSeekInput = (value: number) => {
     if (!duration) return
     setScrubbingState(true)
@@ -1447,6 +1463,9 @@ function InkVideoPlayerReady({
 
     if (!current()) return
 
+    setRateMenuOpen(false)
+    setRotationMenuOpen(false)
+    setResourceMenuOpen(false)
     if (exiting) {
       await releasePlayerScreenOrientation()
       updateVideoView(DEFAULT_VIDEO_VIEW)
@@ -1569,6 +1588,20 @@ function InkVideoPlayerReady({
   }
 
 
+
+  const chooseRotationMode = (mode: RotationMode) => runFullscreenOperation(async () => {
+    if (!immersive || !rootRef.current) return
+    const applied = await applyRotationMode(mode)
+    if (!rootRef.current) return
+    if (!applied) {
+      const landscape = viewport.width > viewport.height
+      const rotation = mode === 'sensor' ? 0 : mode === 'landscape' ? (landscape ? 0 : 90) : (landscape ? 90 : 0)
+      updateVideoView({ ...DEFAULT_VIDEO_VIEW, rotation: normalizeVideoRotation(rotation) })
+    }
+    showHud({ kind: 'mode', label: ROTATION_MODE_LABEL[mode] })
+    fadeHud()
+    revealControls()
+  })
 
   const rotateVideoView = () => runFullscreenOperation(async () => {
     const root = rootRef.current
@@ -1884,7 +1917,19 @@ function InkVideoPlayerReady({
         window.clearTimeout(tapTimerRef.current)
         tapTimerRef.current = null
       }
-      void togglePlay()
+      // Fullscreen thumb zone uses double-tap play/pause; elsewhere the left
+      // and right sides seek by 10 seconds, while the centre toggles playback.
+      const video = videoRef.current
+      const side = gesture.surface.width > 0 ? point.x / gesture.surface.width : .5
+      if (video && duration > 0 && (!immersive || !gesture.thumb) && (side < .36 || side > .64)) {
+        const from = video.currentTime
+        const target = clampSeekTarget(from, side < .36 ? -10 : 10, duration)
+        onSeekCommit(target)
+        showHud({ kind: 'seek', target, offset: target - from })
+        fadeHud()
+      } else {
+        void togglePlay()
+      }
       return
     }
 
@@ -1925,7 +1970,8 @@ function InkVideoPlayerReady({
 
   const progress = duration > 0 ? current / duration : 0
   const bufferRatio = duration > 0 ? Math.min(1, buffered / duration) : 0
-  const showChrome = (controlsVisible || !playing || scrubbing) && !boosting
+  const showChrome = (controlsVisible || !playing || scrubbing || rateMenuOpen || rotationMenuOpen || (immersive && resourceMenuOpen)) && !boosting && !gestureHud
+  const condensed = compact || viewport.width < 470
   const statusMessage = getVideoStatusMessage({
     ready,
     fatal,
@@ -1946,10 +1992,14 @@ function InkVideoPlayerReady({
       aria-modal={ownedOverlays && immersive ? true : undefined}
       aria-label={ownedOverlays && immersive ? title || '视频播放' : undefined}
       onKeyDown={event => {
-        if (ownedOverlays && immersive && event.key === 'Escape') {
+        if (immersive && event.key === 'Escape') {
           event.preventDefault()
           event.stopPropagation()
-          toggleFullscreenRef.current()
+          if (rotationMenuOpen) setRotationMenuOpen(false)
+          else if (rateMenuOpen) setRateMenuOpen(false)
+          else if (resourceMenuOpen) setResourceMenuOpen(false)
+          else if (castOpen) setCastOpen(false)
+          else void toggleFullscreenRef.current()
         }
       }}
       // 播放器控件叠在画面上，始终按深色配色渲染
@@ -1960,6 +2010,9 @@ function InkVideoPlayerReady({
       data-video-fullscreen={immersive ? 'true' : undefined}
       data-video-compact={compact ? 'true' : undefined}
       data-video-scrubbing={scrubbing ? 'true' : undefined}
+      data-video-condensed={condensed ? 'true' : undefined}
+      data-video-sources={resourceOptions.length > 0 ? 'true' : undefined}
+      data-video-page={presentation?.mode === 'page' && !immersive ? 'true' : undefined}
       style={fallbackFullscreen && presentation ? { zIndex: 130 } : undefined}
       className={`overflow-hidden border border-haze bg-ink-deep ${ownedOverlays ? 'outline-none' : ''} ${
         fallbackFullscreen ? 'fixed inset-0 z-[100] border-0' : ''
@@ -2031,7 +2084,7 @@ function InkVideoPlayerReady({
               event.stopPropagation()
               revealControls()
             }}
-            className={`ink-video-top-chrome pointer-events-none absolute inset-x-0 top-0 z-[6] flex items-center justify-between bg-gradient-to-b from-black/75 via-black/30 to-transparent transition-opacity duration-200 ${showChrome ? 'opacity-100' : 'opacity-0'}`}
+            className={`ink-video-top-chrome pointer-events-none absolute inset-x-0 top-0 z-[6] flex items-center justify-between transition-opacity duration-200 ${showChrome ? 'opacity-100' : 'opacity-0'}`}
           >
             <div className={`flex min-w-0 flex-1 items-center gap-1 overflow-hidden ${showChrome ? 'pointer-events-auto' : ''}`}>
               {immersive && (
@@ -2048,8 +2101,9 @@ function InkVideoPlayerReady({
             </div>
 
             <div className={`flex shrink-0 items-center gap-3 pl-2 pr-2 text-paper/90 ${showChrome ? 'pointer-events-auto' : ''}`}>
-              {presentation && <button type="button" aria-label="悬浮播放" title="悬浮播放" onClick={() => void floatPlayer()} className="flex h-10 w-10 items-center justify-center rounded-full active:bg-paper/15"><PictureInPicture2 size={18} /></button>}
-              <span className="text-[13px] font-medium tracking-wide drop-shadow-md tabular-nums">{clock}</span>
+              {presentation && <button type="button" aria-label="悬浮播放" title="悬浮播放" onClick={() => void floatPlayer()} className="ink-player-top-action flex h-10 w-10 items-center justify-center rounded-full active:bg-paper/15"><PictureInPicture2 size={18} /></button>}
+              {integratedSourcePicker && <button type="button" aria-label="媒体资源" title="媒体资源" aria-expanded={resourceMenuOpen} onClick={() => { setResourceMenuOpen(open => !open); setRateMenuOpen(false); setRotationMenuOpen(false) }} className="ink-player-top-action flex h-10 w-10 items-center justify-center rounded-full active:bg-paper/15"><ListVideo size={18} /></button>}
+              <span className="ink-player-top-clock text-[13px] font-medium tracking-wide drop-shadow-md tabular-nums">{clock}</span>
               <button
                 type="button"
                 className={`flex h-8 w-8 items-center justify-center rounded-full active:bg-paper/15 ${
@@ -2064,7 +2118,7 @@ function InkVideoPlayerReady({
               >
                 <Cast size={18} strokeWidth={2} />
               </button>
-              <PlayerBatteryIcon status={battery} />
+              <span className="ink-player-top-battery"><PlayerBatteryIcon status={battery} /></span>
             </div>
           </div>
         )}
@@ -2085,6 +2139,13 @@ function InkVideoPlayerReady({
         )}
 
         {gestureHud && <GestureHudOverlay hud={gestureHud} duration={duration} />}
+        {integratedSourcePicker && resourceMenuOpen && onSelectResource && <PlayerSourceSheet
+          resources={resourceOptions}
+          activeUrl={src}
+          activeFormat={playableFormatForUrl(src, format)}
+          onClose={() => setResourceMenuOpen(false)}
+          onSelect={onSelectResource}
+        />}
 
         {boosting && (
           <div
@@ -2109,9 +2170,9 @@ function InkVideoPlayerReady({
           </div>
         )}
 
-        {statusMessage && (
-          <div className="pointer-events-none absolute inset-0 z-[2] flex items-center justify-center bg-black/35">
-            <div className="flex items-center gap-2 rounded-full bg-ink-raised/85 px-3 py-2 text-[12px] text-paper">
+        {statusMessage && !scrubbing && (
+          <div className="ink-video-status-notice pointer-events-none absolute inset-0 z-[2] flex items-center justify-center">
+            <div className="flex items-center gap-2 rounded-full bg-ink-raised/80 px-3 py-2 text-[12px] text-paper">
               <LoaderCircle className="h-4 w-4 animate-spin text-paper/80" strokeWidth={1.8} />
               <span>{statusMessage}</span>
             </div>
@@ -2157,7 +2218,7 @@ function InkVideoPlayerReady({
               event.stopPropagation()
               revealControls()
             }}
-            className={`ink-video-bottom-chrome pointer-events-none absolute inset-x-0 bottom-0 z-[3] bg-gradient-to-t from-black/95 via-black/50 to-transparent transition-opacity duration-200 ${showChrome ? 'opacity-100' : 'opacity-0'}`}
+            className={`ink-video-bottom-chrome pointer-events-none absolute inset-x-0 bottom-0 z-[7] flex-col justify-end transition-opacity duration-200 ${showChrome ? 'opacity-100' : 'opacity-0'}`}
           >
             {/* Seek Bar Row */}
             <div className={`flex items-center gap-3 mb-1 touch-none ${showChrome ? 'pointer-events-auto' : ''}`}>
@@ -2186,6 +2247,11 @@ function InkVideoPlayerReady({
                   className="ink-seek absolute inset-0 w-full cursor-pointer appearance-none bg-transparent"
                   onPointerDown={() => setScrubbingState(true)}
                   onPointerUp={(event) => onSeekCommit(Number(event.currentTarget.value))}
+                  onPointerCancel={() => {
+                    setScrubbingState(false)
+                    setCurrent(videoRef.current?.currentTime ?? 0)
+                    revealControls()
+                  }}
                   onChange={(event) => onSeekInput(Number(event.currentTarget.value))}
                   onKeyUp={(event) => {
                     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
@@ -2193,23 +2259,25 @@ function InkVideoPlayerReady({
                     }
                   }}
                   onClick={(event) => {
-                    onSeekCommit(Number(event.currentTarget.value))
+                    // Pointerup already committed. Preserve keyboard/assistive
+                    // activation without performing a second media seek.
+                    if (event.detail === 0) onSeekCommit(Number(event.currentTarget.value))
                   }}
                 />
               </div>
               <span className="video-time text-[11px] font-mono tracking-wide text-paper/90 shrink-0 tabular-nums">
-                {formatTime(duration)}
+                {duration > 0 ? formatTime(duration) : '直播'}
               </span>
             </div>
 
             {/* Controls Row */}
             <div className={`flex items-center justify-between mt-1 pb-1 ${showChrome ? 'pointer-events-auto' : ''}`}>
-              <div className="flex items-center gap-1 sm:gap-3">
+              <div className="ink-player-actions-main flex items-center gap-1 sm:gap-3">
                 <button
                   type="button"
                   aria-label={playing ? '暂停' : '播放'}
                   onClick={() => void togglePlay()}
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-paper transition-colors active:bg-paper/15"
+                  className="ink-player-primary-control flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-paper transition-colors active:bg-paper/15"
                 >
                   {playing ? (
                     <Pause size={20} strokeWidth={2} fill="currentColor" fillOpacity={0.2} />
@@ -2221,7 +2289,7 @@ function InkVideoPlayerReady({
                   type="button"
                   aria-label="后退 15 秒"
                   onClick={() => onSeekCommit(Math.max(0, current - 15))}
-                  className="video-extended-control flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-paper/90 transition-colors active:bg-paper/15"
+                  className="video-extended-control ink-player-skip-control flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-paper/90 transition-colors active:bg-paper/15"
                 >
                   <SkipBack size={18} strokeWidth={2} />
                 </button>
@@ -2229,7 +2297,7 @@ function InkVideoPlayerReady({
                   type="button"
                   aria-label="前进 15 秒"
                   onClick={() => onSeekCommit(Math.min(duration, current + 15))}
-                  className="video-extended-control flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-paper/90 transition-colors active:bg-paper/15"
+                  className="video-extended-control ink-player-skip-control flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-paper/90 transition-colors active:bg-paper/15"
                 >
                   <SkipForward size={18} strokeWidth={2} />
                 </button>
@@ -2242,19 +2310,23 @@ function InkVideoPlayerReady({
                     aria-expanded={rateMenuOpen}
                     onClick={() => {
                       setRateMenuOpen((open) => !open)
+                      setRotationMenuOpen(false)
+                      setResourceMenuOpen(false)
                       revealControls()
                     }}
-                    className="flex h-10 min-w-10 items-center justify-center rounded-full px-2 font-mono text-[13px] tracking-wide text-paper transition-colors active:bg-paper/15"
+                    className="ink-player-rate-button flex h-10 min-w-10 items-center justify-center rounded-full px-2 font-mono text-[13px] tracking-wide text-paper transition-colors active:bg-paper/15"
                   >
                     x{Number.isInteger(rate) ? rate.toFixed(1) : rate}
                   </button>
                   {rateMenuOpen && (
-                    <div className="absolute bottom-full left-0 mb-2 flex min-w-[64px] flex-col overflow-hidden rounded-xl border border-haze bg-ink-raised/95 shadow-lg">
+                    <div className="ink-player-rate-menu absolute bottom-full left-0 mb-2 flex min-w-[76px] flex-col overflow-hidden rounded-xl border border-haze bg-ink-raised/95 shadow-lg" role="menu" aria-label="播放速度">
                       {PLAYBACK_RATES.map((value) => (
                         <button
                           key={value}
                           type="button"
                           onClick={() => applyRate(value)}
+                          role="menuitemradio"
+                          aria-checked={value === rate}
                           className={`px-3 py-1.5 text-center font-mono text-[12px] ${
                             value === rate ? 'text-cinnabar-soft' : 'text-paper/80'
                           }`}
@@ -2267,16 +2339,35 @@ function InkVideoPlayerReady({
                 </div>
               </div>
 
-              <div className="flex items-center gap-1 sm:gap-2 pr-1">
+              <div className="ink-player-actions-extra flex items-center gap-1 sm:gap-2 pr-1">
                 <button
                   type="button"
-                  aria-label={rotationMode ? `旋转模式：${ROTATION_MODE_LABEL[rotationMode]}，点击切换` : '切换横竖屏'}
-                  title={rotationMode ? ROTATION_MODE_LABEL[rotationMode] : '切换横竖屏'}
-                  onClick={() => void rotateVideoView()}
-                  className="video-extended-control flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-paper/90 transition-colors active:bg-paper/15"
+                  className="video-extended-control ink-player-mute-control flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-paper/90 transition-colors active:bg-paper/15"
+                  aria-label={muted ? '取消静音' : '静音'}
+                  aria-pressed={muted}
+                  onClick={toggleMute}
                 >
-                  <RotateCw size={17} strokeWidth={2} />
+                  {muted ? <VolumeX size={18} strokeWidth={1.9} /> : <Volume2 size={18} strokeWidth={1.9} />}
                 </button>
+                <div className="video-extended-control relative ink-player-rotation-control">
+                  <button
+                    type="button"
+                    aria-label={immersive ? '屏幕方向' : '切换横竖屏'}
+                    title={rotationMode ? ROTATION_MODE_LABEL[rotationMode] : '屏幕方向'}
+                    aria-expanded={immersive ? rotationMenuOpen : undefined}
+                    onClick={() => {
+                      if (!immersive) { void rotateVideoView(); return }
+                      setRotationMenuOpen(open => !open)
+                      setRateMenuOpen(false)
+                      setResourceMenuOpen(false)
+                      revealControls()
+                    }}
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-paper/90 transition-colors active:bg-paper/15"
+                  >
+                    <RotateCw size={17} strokeWidth={1.9} />
+                  </button>
+                  {immersive && rotationMenuOpen && <PlayerRotationMenu value={rotationMode} onSelect={mode => void chooseRotationMode(mode)} onClose={() => setRotationMenuOpen(false)} />}
+                </div>
 
                 <button
                   type="button"

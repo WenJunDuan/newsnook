@@ -1,5 +1,5 @@
 import { useRef, type RefObject } from 'react'
-import { ArrowDownRight, Move, PanelTop, X } from 'lucide-react'
+import { ArrowDownRight, GripVertical, Maximize2, X } from 'lucide-react'
 import { useWindowGesture } from './useWindowGesture'
 
 export function FloatingVideoWindow({ title, active, hidden, domFullscreen, slotRef, onRestore, onClose }: {
@@ -19,9 +19,9 @@ export function FloatingVideoWindow({ title, active, hidden, domFullscreen, slot
   >
     <header className="floating-video-titlebar">
       <div role="button" tabIndex={0} aria-label="移动悬浮窗口" className="floating-video-drag" {...drag}>
-        <Move size={13} aria-hidden="true" /><span>{title}</span>
+        <GripVertical size={15} strokeWidth={1.7} aria-hidden="true" /><span>{title}</span>
       </div>
-      <button type="button" aria-label="恢复播放页" title="恢复播放页" onClick={onRestore}><PanelTop size={17} /></button>
+      <button type="button" aria-label="恢复播放页" title="恢复播放页" onClick={onRestore}><Maximize2 size={16} strokeWidth={1.8} /></button>
       <button type="button" aria-label="关闭悬浮播放" title="关闭" onClick={onClose}><X size={18} /></button>
     </header>
     <div ref={slotRef} className="floating-video-slot" />
