@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bookmark, BookmarkCheck, ChevronRight, Clock3, Copy,
-  Download, Film, Globe2, Home, Images, Laptop, LockKeyhole, LogOut, ScanText, Share2, Shield,
-  MoreHorizontal, Pencil, Play, Plus, RefreshCw, Search, Settings2, ShieldCheck, Square, Trash2, X, Bot,
+  Download, Film, Globe2, Home, Images, Laptop, LogOut, ScanText, Share2, Shield,
+  MoreHorizontal, Pencil, Play, Plus, RefreshCw, Settings2, ShieldCheck, Square, Trash2, X, Bot,
 } from 'lucide-react'
 import { Share } from '@capacitor/share'
 import {createBrowserConfigController} from './agent/browserConfig'
@@ -31,6 +31,7 @@ import { BrowserFindBar } from './BrowserFindBar'
 import { BrowserImagesPanel } from './BrowserImagesPanel'
 import { useBrowserDialogFocus } from './useBrowserDialogFocus'
 import { BrowserIconButton, BrowserSheet } from './BrowserPrimitives'
+import { BrowserAddressBar, BrowserMediaStrip, browserMediaMatchesPage } from './BrowserAddressBar'
 import { BrowserAgentPanel } from './agent/BrowserAgentPanel'
 import { BrowserStartPage } from './BrowserStartPage'
 import { BrowserSearchPanel } from './BrowserSearchPanel'
@@ -167,6 +168,8 @@ export function BrowserWorkspace({
   const marked = (privateMode ? privateMarks : marks).some(item => item.url === current)
   const currentMedia = session.mediaTabs.get(session.state.tabId ?? -1)
   const resources = useMemo(() => browserMediaResources(currentMedia?.observations ?? []), [currentMedia])
+  const currentResources = active && browserMediaMatchesPage(current, currentMedia?.pageUrl) ? resources : []
+  const discoveryCount = playing ? 0 : currentResources.length
   const recent = useMemo(() => compactRecentSites(history, hiddenHosts, 4), [history, hiddenHosts])
 
   useEffect(() => {
@@ -416,12 +419,15 @@ export function BrowserWorkspace({
     })
   }
 
+  const openMediaPanel = () => {openPanel('media'); if (active) void session.command('scanMedia')}
+
   const menuItems: {label: string; icon: typeof Bookmark; action: () => void; disabled?: boolean; selected?: boolean; badge?: string}[] = [
     {label: marked ? '已加书签' : '添加书签', icon: marked ? BookmarkCheck : Bookmark, action: toggleBookmark, disabled: !active, selected: marked},
     {label:'书签', icon:Bookmark, action:() => openPanel('bookmarks')},
     {label:'浏览历史', icon:Clock3, action:() => openPanel('history')},
     {label:'下载管理', icon:Download, action:() => runCommand('downloads')},
-    {label:'媒体资源', icon:Film, action:() => {openPanel('media'); if (active) void session.command('scanMedia')}, disabled:!active, badge:resources.length ? String(resources.length) : undefined},
+    {label:'主页', icon:Home, action:goHome, disabled:session.pending},
+    {label:'媒体资源', icon:Film, action:openMediaPanel, disabled:!active, badge:currentResources.length ? String(currentResources.length) : undefined},
     {label:'AI 浏览助手', icon:Bot, action:()=>{setPanel(null);setAgentMinimized(false);setAgentOpen(true)}},
     {label:'用户脚本', icon:ShieldCheck, action:() => openPanel('scripts'), badge:active ? String(session.state.activeScriptCount ?? 0) : undefined},
     {label:'脚本菜单', icon:Settings2, action:() => runCommand('scriptMenu'), disabled:!active},
@@ -437,25 +443,21 @@ export function BrowserWorkspace({
   ]
 
   const toolbar = findOpen ? <BrowserFindBar privateMode={privateMode} result={session.findResult} onFind={session.findInPage} onNext={session.findNext} onClose={closeFind}/> : <nav aria-label="浏览器控制" className="browser-toolbar relative z-10 shrink-0 border-y border-haze bg-ink-raised">
+    {bottomAddress && <BrowserMediaStrip count={discoveryCount} open={panel === 'media'} onOpen={openMediaPanel}/>}
     <div className="browser-toolbar-row flex h-14 items-center gap-0.5 px-1.5">
       <BrowserIconButton label="返回有所闻" onClick={close}><LogOut size={20} strokeWidth={1.8}/></BrowserIconButton>
-      <BrowserIconButton label="主页" disabled={session.pending} onClick={goHome}><Home size={20} strokeWidth={1.8}/></BrowserIconButton>
-      <div className={'browser-address flex h-11 min-w-0 flex-1 items-center rounded-xl bg-haze/60 text-paper ' + (privateMode ? 'ring-1 ring-paper-muted/35' : '')}>
-        {active ? <button type="button" aria-label={privateMode ? '隐私模式与网站信息' : '网站信息'} onClick={() => openPanel('site')} className="flex h-11 w-10 shrink-0 items-center justify-center rounded-l-xl text-paper-muted">
-          {privateMode ? <Shield size={17}/> : /^https:/i.test(current) ? <LockKeyhole size={15}/> : <Globe2 size={17}/>}
-        </button> : <span className="flex w-10 shrink-0 justify-center text-paper-muted">{privateMode ? <Shield size={17}/> : <Search size={17}/>}</span>}
-        <button type="button" aria-label="搜索或输入网址" onClick={showSearch} className="flex h-11 min-w-0 flex-1 items-center gap-1.5 pr-3 text-left">
-          {privateMode && <span className="shrink-0 text-[12px] font-semibold text-paper-muted">隐私</span>}
-          <span className="block truncate text-[14px] font-medium">{active ? browserHostLabel(current) : privateMode ? '搜索或网址' : '搜索或输入网址'}</span>
-        </button>
-      </div>
+      <BrowserIconButton label="主页" className="browser-toolbar-compact-optional" disabled={session.pending} onClick={goHome}><Home size={20} strokeWidth={1.8}/></BrowserIconButton>
+      <BrowserAddressBar active={active} current={current} privateMode={privateMode}
+        mediaCount={discoveryCount} mediaTabId={session.state.tabId} mediaPage={currentMedia?.pageUrl}
+        mediaPanelOpen={panel === 'media'} onOpenSite={() => openPanel('site')}
+        onSearch={showSearch} onOpenMedia={openMediaPanel}/>
       <BrowserIconButton label={session.state.loading ? '停止加载' : '刷新'} disabled={!active || (!session.state.loading && session.pending)} onClick={() => runCommand(session.state.loading ? 'stop' : 'reload')}>
         {session.state.loading ? <Square size={17} strokeWidth={1.9}/> : <RefreshCw size={19} strokeWidth={1.8}/>}
       </BrowserIconButton>
       <BrowserIconButton label="标签页" disabled={session.pending} onClick={() => openPanel('tabs')}>
         <span className="flex size-[18px] items-center justify-center rounded-[4px] border-[1.5px] border-current text-[10.5px] font-bold leading-none tabular-nums select-none">{session.tabs.length || 1}</span>
       </BrowserIconButton>
-      <BrowserIconButton label={agentBusy?'AI 浏览助手（任务未结束）':'AI 浏览助手'} onClick={() => {
+      <BrowserIconButton label={agentBusy?'AI 浏览助手（任务未结束）':'AI 浏览助手'} className="browser-toolbar-compact-optional" onClick={() => {
         setPanel(null)
         if (!agentOpen) {setAgentOpen(true);setAgentMinimized(false)}
         else setAgentMinimized(value=>!value)
@@ -464,6 +466,7 @@ export function BrowserWorkspace({
         </span></BrowserIconButton>
       <BrowserIconButton label="网页工具" onClick={() => openPanel(panel === 'menu' ? null : 'menu')}><MoreHorizontal size={20} strokeWidth={1.8}/></BrowserIconButton>
     </div>
+    {!bottomAddress && <BrowserMediaStrip count={discoveryCount} open={panel === 'media'} onOpen={openMediaPanel}/>}
     {session.state.loading && <div role="progressbar" aria-label="网页加载进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={session.state.progress ?? 0}
       className="pointer-events-none absolute inset-x-0 top-0 h-0.5 overflow-hidden bg-haze">
       <div className="h-full bg-cinnabar transition-[width] duration-150" style={{width: Math.max(4, session.state.progress ?? 4) + '%'}}/>
@@ -592,13 +595,13 @@ export function BrowserWorkspace({
 
     {panel === 'media' && <BrowserSheet title="媒体资源" onClose={() => setPanel(null)}>
       <div className="mb-3 flex items-center justify-between text-[13px] text-paper-muted">
-        <span>{resources.length ? '发现 ' + resources.length + ' 个资源' : '浏览或播放视频后自动识别'}</span>
+        <span>{currentResources.length ? '发现 ' + currentResources.length + ' 个资源' : '浏览或播放视频后自动识别'}</span>
         <button type="button" disabled={!active || session.pending} onClick={() => {void session.command('scanMedia')}} className="flex min-h-11 items-center gap-1.5 px-2 disabled:opacity-30"><RefreshCw size={16}/>重新扫描</button>
       </div>
-      {resources.length ? <ul className="divide-y divide-haze">{resources.map(resource => <li key={resource.id || resource.url} className="flex items-center gap-3 py-4">
+      {currentResources.length ? <ul className="divide-y divide-haze">{currentResources.map(resource => <li key={resource.id || resource.url} className="flex items-center gap-3 py-4">
         <Film size={21} className="shrink-0 text-paper-muted"/>
         <div className="min-w-0 flex-1"><p className="text-[14px] font-medium">{browserResourceTitle(resource)}</p><p className="mt-1 truncate text-[12px] text-paper-muted">{browserHostLabel(resource.url) || browserHostLabel(resource.pageUrl || '')}</p></div>
-        <button type="button" aria-label={'播放 ' + browserResourceTitle(resource)} onClick={() => {setPlayError(''); setPlaying({resource, resources, title, selection:++playbackSelection.current, tabId:session.state.tabId}); setPanel(null)}}
+        <button type="button" aria-label={'播放 ' + browserResourceTitle(resource)} onClick={() => {setPlayError(''); setPlaying({resource, resources:currentResources, title, selection:++playbackSelection.current, tabId:session.state.tabId}); setPanel(null)}}
           className="flex min-h-11 items-center gap-1.5 rounded-xl bg-paper px-3 text-[13px] font-medium text-ink"><Play size={16}/>播放</button>
       </li>)}</ul> : <div className="flex min-h-40 flex-col items-center justify-center text-paper-muted"><Film size={30} strokeWidth={1.4}/><p className="mt-4 text-[14px]">暂未发现可播放资源</p></div>}
     </BrowserSheet>}
