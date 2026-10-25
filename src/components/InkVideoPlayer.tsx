@@ -1959,6 +1959,7 @@ function InkVideoPlayerReady({
       data-no-font-pinch=""
       data-video-fullscreen={immersive ? 'true' : undefined}
       data-video-compact={compact ? 'true' : undefined}
+      data-video-scrubbing={scrubbing ? 'true' : undefined}
       style={fallbackFullscreen && presentation ? { zIndex: 130 } : undefined}
       className={`overflow-hidden border border-haze bg-ink-deep ${ownedOverlays ? 'outline-none' : ''} ${
         fallbackFullscreen ? 'fixed inset-0 z-[100] border-0' : ''
@@ -2164,13 +2165,13 @@ function InkVideoPlayerReady({
                 {formatTime(current)}
               </span>
               <div className="relative flex-1 h-5 flex items-center">
-                <div className="ink-video-y-center absolute inset-x-0 h-[3px] overflow-hidden rounded-full bg-paper/20">
+                <div className="ink-video-seek-track ink-video-y-center absolute inset-x-0 h-[3px] overflow-hidden rounded-full bg-paper/20">
                   <div
                     className="absolute inset-y-0 left-0 bg-paper/40"
                     style={{ width: `${bufferRatio * 100}%` }}
                   />
                   <div
-                    className="absolute inset-y-0 left-0 bg-cinnabar"
+                    className="ink-video-seek-played absolute inset-y-0 left-0 bg-cinnabar"
                     style={{ width: `${progress * 100}%` }}
                   />
                 </div>
