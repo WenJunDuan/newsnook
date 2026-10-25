@@ -149,7 +149,6 @@
 .ink-gesture-level-track { position:relative; height:clamp(54px,19vh,110px); width:3px; background:rgba(255,255,255,.24); border-radius:10px; overflow:hidden; }
 .ink-gesture-level-fill { position:absolute; bottom:0; left:0; width:100%; border-radius:inherit; background:var(--ink-player-accent); }
 .ink-gesture-level-value { font-size:10px; font-weight:600; font-variant-numeric:tabular-nums; }
-[data-video-compact='true'] .ink-gesture-level { display:none; }
 @media (max-height:380px) {
   .ink-gesture-level { width:38px; padding:8px 5px; gap:5px; }
   .ink-gesture-level-track { height:46px; }

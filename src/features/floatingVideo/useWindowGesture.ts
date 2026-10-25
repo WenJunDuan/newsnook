@@ -165,6 +165,7 @@ export function useWindowGesture(rootRef: RefObject<HTMLDivElement | null>, slot
           captures.current.set(id, event.currentTarget)
         }
         event.preventDefault()
+        event.stopPropagation() // The frame exclusively owns the two-finger gesture.
         setTip(false)
       }
     },
@@ -183,7 +184,7 @@ export function useWindowGesture(rootRef: RefObject<HTMLDivElement | null>, slot
     onPointerUpCapture(event: PointerEvent<HTMLDivElement>) {
       pointers.current.delete(event.pointerId)
       captures.current.delete(event.pointerId)
-      pinchStart.current = null
+      if (pointers.current.size === 0) pinchStart.current = null
       if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
     },
     onPointerCancelCapture: cancel,

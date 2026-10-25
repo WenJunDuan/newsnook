@@ -500,6 +500,8 @@ function InkVideoPlayerReady({
   const setSessionImmersive = presentation?.setImmersive
   const bindSessionRuntime = presentation?.bindRuntime
   const compact = presentation?.mode === 'floating' && !immersive
+  // The floating player shares playback gestures with fullscreen; its frame owns pinching.
+  const gestureEnabled = immersive || compact
   const globalVideoSurface = useHasGlobalVideoSurface()
   const runTransition = presentation?.runTransition
   const claimPlayback = useEffectEvent(() => presentation?.claimPlayback())
@@ -1292,7 +1294,7 @@ function InkVideoPlayerReady({
 
   /** 进入全屏时对齐当前系统档位，退出时把亮度还给系统。 */
   useEffect(() => {
-    if (!immersive) {
+    if (!gestureEnabled) {
       brightnessControl.release()
       volumeControl.release()
       return
@@ -1311,7 +1313,7 @@ function InkVideoPlayerReady({
     return () => {
       cancelled = true
     }
-  }, [brightnessControl, immersive, volumeControl])
+  }, [brightnessControl, gestureEnabled, volumeControl])
 
   useEffect(() => {
     if (playing && !scrubbing) scheduleHideControls()
@@ -1723,7 +1725,7 @@ function InkVideoPlayerReady({
     })()
   }
 
-  /** 全屏下半屏才接管滑动；竖屏内嵌播放器保持原有的点按语义。 */
+  /** Fullscreen and floating video share the same direction-locked playback gestures. */
   const lockGesture = (gesture: GestureState, dx: number, dy: number) => {
     const axis = resolveGesture(dx, dy, gesture.localX, gesture.surface)
     // Vertical level gestures must work from the FIRST downward stroke anywhere
@@ -1748,7 +1750,8 @@ function InkVideoPlayerReady({
     if (gesture.axis === 'seek') {
       const video = videoRef.current
       const total = video && Number.isFinite(video.duration) ? video.duration : 0
-      const offset = seekOffsetSeconds(dx, gesture.surface.width, total)
+      const width = compact ? Math.max(gesture.surface.width, 360) : gesture.surface.width
+      const offset = seekOffsetSeconds(dx, width, total)
       showHud({
         kind: 'seek',
         target: clampSeekTarget(gesture.fromTime, offset, total),
@@ -1758,7 +1761,9 @@ function InkVideoPlayerReady({
     }
 
     const kind = gesture.axis === 'volume' ? 'volume' : 'brightness'
-    const next = clampLevel(gesture.fromLevel + levelOffset(dy, gesture.surface.height))
+    // A compact 130px-high view needs a larger reference height for fine control.
+    const height = compact ? Math.max(gesture.surface.height, 280) : gesture.surface.height
+    const next = clampLevel(gesture.fromLevel + levelOffset(dy, height))
     levelsRef.current[kind] = next
     commitLevel(kind, next)
   }
@@ -1769,7 +1774,8 @@ function InkVideoPlayerReady({
       const video = videoRef.current
       const total = video && Number.isFinite(video.duration) ? video.duration : 0
       if (video && total > 0) {
-        const offset = seekOffsetSeconds(dx, gesture.surface.width, total)
+        const width = compact ? Math.max(gesture.surface.width, 360) : gesture.surface.width
+        const offset = seekOffsetSeconds(dx, width, total)
         const target = clampSeekTarget(gesture.fromTime, offset, total)
         video.currentTime = target
         setCurrent(target)
@@ -1795,12 +1801,35 @@ function InkVideoPlayerReady({
   }
 
   const onGesturePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (compactRef.current) return
     if (fatal) return
+    // WebView may retarget pointerup to the floating frame after a pinch.
+    // A pointer without capture is no longer owned by this player, even when
+    // the browser omitted the matching up/cancel event on the child surface.
+    let discarded = false
+    for (const id of activePointersRef.current.keys()) {
+      if (!event.currentTarget.hasPointerCapture(id)) {
+        activePointersRef.current.delete(id)
+        discarded = true
+      }
+    }
+    if (discarded && activePointersRef.current.size === 0) {
+      pinchRef.current = null
+      multiTouchRef.current = false
+      clearGestureTimers()
+      invalidateLevelWrites()
+      fadeHud()
+    }
     event.currentTarget.setPointerCapture(event.pointerId)
     const { point, surface } = pointerLocation(event)
     activePointersRef.current.set(event.pointerId, point)
     if (activePointersRef.current.size >= 2) {
+      // FloatingVideoWindow takes ownership of both fingers to resize the frame.
+      if (compactRef.current) {
+        clearGestureTimers()
+        endBoost()
+        gestureRef.current.moved = true
+        return
+      }
       const pair = pointerPair()
       if (!pair) return
       multiTouchRef.current = true
@@ -1825,7 +1854,7 @@ function InkVideoPlayerReady({
       y: point.y,
       localX: point.x,
       at: Date.now(),
-      thumb: immersive && isThumbZone(point.y, surface.height),
+      thumb: compact || (immersive && isThumbZone(point.y, surface.height)),
       surface,
       fromView: videoViewRef.current,
     }
@@ -1834,7 +1863,7 @@ function InkVideoPlayerReady({
     // Zoom is a viewing transform, not a reason to disable long-press boost.
     // Starting a pinch or moving past touch slop cancels this timer below.
     longPressTimerRef.current = window.setTimeout(startBoost, LONG_PRESS_MS)
-    if (immersive) syncLevels(gesture)
+    if (gestureEnabled) syncLevels(gesture)
   }
 
   const onGesturePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1869,7 +1898,7 @@ function InkVideoPlayerReady({
       gesture.moved = true
       clearGestureTimers()
     }
-    if (!immersive) return
+    if (!gestureEnabled) return
 
     if (gesture.axis === 'none') lockGesture(gesture, dx, dy)
     if (gesture.axis === 'none') return
@@ -1877,7 +1906,7 @@ function InkVideoPlayerReady({
   }
 
   const onGesturePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (compactRef.current || !activePointersRef.current.has(event.pointerId)) return
+    if (!activePointersRef.current.has(event.pointerId)) return
     const { point } = pointerLocation(event)
     // Remove first: releasePointerCapture may immediately raise lostpointercapture.
     activePointersRef.current.delete(event.pointerId)
@@ -1925,7 +1954,7 @@ function InkVideoPlayerReady({
       // and right sides seek by 10 seconds, while the centre toggles playback.
       const video = videoRef.current
       const side = gesture.surface.width > 0 ? point.x / gesture.surface.width : .5
-      if (video && duration > 0 && (!immersive || !gesture.thumb) && (side < .36 || side > .64)) {
+      if (video && duration > 0 && (compact || !immersive || !gesture.thumb) && (side < .36 || side > .64)) {
         const from = video.currentTime
         const target = clampSeekTarget(from, side < .36 ? -10 : 10, duration)
         onSeekCommit(target)
@@ -2062,13 +2091,14 @@ function InkVideoPlayerReady({
             data-video-gesture-surface=""
             className="absolute inset-0 z-[1] touch-none select-none"
           onPointerDown={onGesturePointerDown}
-          onClick={compact ? () => {
+          // Touch clicks already pass through pointerup's single/double-tap timer.
+          // Only synthesize a toggle for keyboard activation, avoiding duplicate actions.
+          onClick={compact ? event => {
+            if (event.detail !== 0) return
             if (showChromeRef.current) {
               clearHideTimer()
               setControlsVisible(false)
-            } else {
-              revealControls()
-            }
+            } else revealControls()
           } : undefined}
             onPointerMove={onGesturePointerMove}
             onPointerUp={onGesturePointerUp}

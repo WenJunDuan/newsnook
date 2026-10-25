@@ -18,6 +18,16 @@ export function FloatingVideoWindow({ title, active, hidden, domFullscreen, slot
   const { rect, drag, resize, pinch, tip, dismissTip } = useWindowGesture(rootRef, slotRef, hidden)
   const [chromeVisible, setChromeVisible] = useState(true)
   const chromeTimer = useRef<number | null>(null)
+  const touches = useRef(new Map<number, { x: number; y: number }>())
+  const touchedWithTwoFingers = useRef(false)
+  useEffect(() => {
+    const clearTouches = () => {
+      touches.current.clear()
+      touchedWithTwoFingers.current = false
+    }
+    window.addEventListener('blur', clearTouches)
+    return () => window.removeEventListener('blur', clearTouches)
+  }, [])
 
   const cancelChromeTimer = useCallback(() => {
     if (chromeTimer.current != null) window.clearTimeout(chromeTimer.current)
@@ -36,6 +46,8 @@ export function FloatingVideoWindow({ title, active, hidden, domFullscreen, slot
   useEffect(() => {
     if (hidden) {
       cancelChromeTimer()
+      touches.current.clear()
+      touchedWithTwoFingers.current = false
       return
     }
     const video = slotRef.current?.querySelector('video')
@@ -61,9 +73,27 @@ export function FloatingVideoWindow({ title, active, hidden, domFullscreen, slot
   }, [cancelChromeTimer, hidden, revealChrome, slotRef])
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    // Preserve pinch-to-resize: showing controls must not capture the pointer.
-    revealChrome()
+    // First give the floating frame a chance to own a two-finger resize.
     pinch.onPointerDownCapture(event)
+    if (event.pointerType === 'touch') {
+      touches.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (touches.current.size > 1) touchedWithTwoFingers.current = true
+    } else revealChrome()
+  }
+  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const initial = touches.current.get(event.pointerId)
+    const tapped = initial && !touchedWithTwoFingers.current && touches.current.size === 1
+      && Math.hypot(event.clientX - initial.x, event.clientY - initial.y) <= 12
+    pinch.onPointerUpCapture(event)
+    touches.current.delete(event.pointerId)
+    if (touches.current.size === 0) touchedWithTwoFingers.current = false
+    // A swipe should only show its own seek/level HUD, never the window toolbar.
+    if (tapped) revealChrome()
+  }
+  const handlePointerCancel = () => {
+    touches.current.clear()
+    touchedWithTwoFingers.current = false
+    pinch.onPointerCancelCapture()
   }
 
   return <div
@@ -77,9 +107,9 @@ export function FloatingVideoWindow({ title, active, hidden, domFullscreen, slot
     style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height, visibility: hidden ? 'hidden' : undefined }}
     onPointerDownCapture={handlePointerDown}
     onPointerMoveCapture={pinch.onPointerMoveCapture}
-    onPointerUpCapture={pinch.onPointerUpCapture}
-    onPointerCancelCapture={pinch.onPointerCancelCapture}
-    onPointerEnter={revealChrome}
+    onPointerUpCapture={handlePointerUp}
+    onPointerCancelCapture={handlePointerCancel}
+    onPointerEnter={event => { if (event.pointerType === 'mouse' || event.pointerType === 'pen') revealChrome() }}
     onFocusCapture={revealChrome}
   >
     <div ref={slotRef} className="floating-video-slot" />

@@ -106,20 +106,33 @@ try {
   await click('悬浮播放')
   assert.equal(floating.querySelector('.floating-video-tip'), null, 'returning to floating mode must not pin a cancelled guide')
   const compactSurface = floating.querySelector<HTMLElement>('[data-video-gesture-surface]')!
+  const captured = new Set<number>()
+  Object.assign(compactSurface, {
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: Number.parseFloat(floating.style.width),
+      height: Number.parseFloat(floating.style.height) }),
+    setPointerCapture: (id: number) => captured.add(id),
+    hasPointerCapture: (id: number) => captured.has(id),
+    releasePointerCapture: (id: number) => captured.delete(id),
+  })
   const compactChrome = floating.querySelector<HTMLElement>('.ink-video-bottom-chrome')!
   const beforeTapVisible = compactChrome.className.includes('opacity-100')
-  await act(async () => {
-    const event = new window.Event('pointerup', { bubbles: true })
-    Object.assign(event, { pointerId: 7, clientX: 120, clientY: 40 })
-    compactSurface.dispatchEvent(event)
-    compactSurface.dispatchEvent(new window.Event('click', { bubbles: true }))
-  })
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 385)) })
-  assert.equal(compactChrome.className.includes('opacity-100'), !beforeTapVisible, 'a compact tap toggles controls without the legacy timer undoing it')
-  await act(async () => { compactSurface.dispatchEvent(new window.Event('click', { bubbles: true })) })
-  assert.equal(compactChrome.className.includes('opacity-100'), beforeTapVisible, 'second tap returns to the previous control state')
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 385)) })
-  assert.equal(compactChrome.className.includes('opacity-100'), beforeTapVisible, 'legacy double-tap timeout must not reverse compact controls')
+  const tap = async (id: number) => {
+    await act(async () => {
+      for (const type of ['pointerdown', 'pointerup']) {
+        const event = new window.Event(type, { bubbles: true })
+        Object.assign(event, { pointerId: id, pointerType: 'touch', button: 0, clientX: 120, clientY: 40 })
+        compactSurface.dispatchEvent(event)
+      }
+      const click = new window.Event('click', { bubbles: true })
+      Object.assign(click, { detail: 1 })
+      compactSurface.dispatchEvent(click)
+    })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 385)) })
+  }
+  await tap(7)
+  assert.equal(compactChrome.className.includes('opacity-100'), !beforeTapVisible, 'a real compact pointer tap toggles controls exactly once')
+  await tap(8)
+  assert.equal(compactChrome.className.includes('opacity-100'), beforeTapVisible, 'next tap restores previous control state without a duplicate click toggle')
   const drag = floating.querySelector<HTMLElement>('[aria-label="移动悬浮窗口"]')!
   const left = Number.parseFloat(floating.style.left)
   await act(async () => { const event = new window.Event('keydown', { bubbles: true }); Object.assign(event, { key: 'ArrowLeft' }); drag.dispatchEvent(event); await new Promise(resolve => setTimeout(resolve, 5)) })

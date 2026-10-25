@@ -50,11 +50,13 @@
   transition: opacity 190ms ease;
 }
 .floating-video-drag {
-  flex: 1;
+  /* Only the grip takes touches; dragging must not consume half of a 240px video. */
+  flex: 0 0 42px;
   display: flex;
   align-items: center;
   gap: 5px;
-  min-width: 0;
+  width: 42px;
+  min-width: 42px;
   height: 37px;
   padding: 0 7px;
   cursor: move;
@@ -67,8 +69,12 @@
   opacity: .75;
 }
 .floating-video-drag span {
+  position: absolute;
+  top: 13px;
+  left: 42px;
   display: block;
-  min-width: 0;
+  max-width: calc(100% - 132px);
+  pointer-events: none;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -121,6 +127,31 @@
 [data-floating-chrome='hidden'] .floating-video-idle-grip { opacity: 1; }
 
 /* Floating playback offers only one central play/pause and a quiet timeline. */
+/* Compact HUDs: readable feedback without hiding the film behind large overlays. */
+[data-video-compact] .ink-gesture-level {
+  display: flex;
+  width: 29px;
+  padding: 5px 3px;
+  gap: 3px;
+  border-radius: 9px;
+  background: rgba(17, 20, 25, .58);
+}
+[data-video-compact] .ink-gesture-level--brightness { left: 5px; }
+[data-video-compact] .ink-gesture-level--volume { right: 5px; }
+[data-video-compact] .ink-gesture-level-track { height: 30px; width: 2px; }
+[data-video-compact] .ink-gesture-level svg { width: 13px; height: 13px; }
+[data-video-compact] .ink-gesture-level-value { font-size: 9px; }
+[data-video-compact] .ink-gesture-notice--top { align-items: center; padding-top: 0; }
+[data-video-compact] .ink-gesture-notice-body {
+  min-height: 27px;
+  gap: 4px;
+  padding: 5px 8px;
+  border-radius: 9px;
+  font-size: 10px;
+}
+[data-video-compact] .ink-gesture-notice-body svg { width: 13px; height: 13px; }
+[data-video-compact] .ink-gesture-time { font-size: 12px; }
+[data-video-compact] .ink-gesture-secondary { display: none; }
 [data-video-compact] .ink-video-top-chrome { display: none; }
 [data-video-compact] .ink-video-bottom-chrome {
   /* The last 44px belongs to the resize hit target, never the seek slider. */
