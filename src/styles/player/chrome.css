@@ -80,3 +80,63 @@
   }
 }
 
+
+/* Ink Player V2: one small visual vocabulary across inline, immersive and floating. */
+.ink-video-top-chrome {
+  padding: .5rem .75rem 1.25rem;
+  background: linear-gradient(180deg, rgba(4,5,8,.66), rgba(4,5,8,.20) 57%, transparent) !important;
+}
+.ink-video-bottom-chrome {
+  padding: 1.3rem .85rem .35rem;
+  background: linear-gradient(0deg, rgba(4,5,8,.74), rgba(4,5,8,.32) 62%, transparent) !important;
+}
+.ink-video-abs-center {
+  background: rgba(18,20,24,.45);
+  border: 1px solid rgba(255,255,255,.26);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 6px 28px rgba(0,0,0,.23);
+}
+.ink-video-top-chrome button, .ink-video-bottom-chrome button {
+  border-radius: 12px;
+  transition: background-color 150ms ease, transform 150ms ease;
+}
+.ink-video-top-chrome button:active, .ink-video-bottom-chrome button:active { transform: scale(.96); }
+.ink-video-top-chrome button:focus-visible, .ink-video-bottom-chrome button:focus-visible,
+.ink-seek:focus-visible { outline: 2px solid rgba(255,255,255,.9); outline-offset: 2px; }
+.ink-gesture-notice {
+  position: absolute; z-index: 8; inset: 0; display: flex; align-items: center;
+  justify-content: center; pointer-events: none; color: #f8f6f1;
+}
+.ink-gesture-notice--top { align-items: flex-start; padding-top: max(58px, calc(var(--video-sat,0px) + 58px)); }
+.ink-gesture-notice-body {
+  display: inline-flex; align-items: center; gap: 7px; max-width: calc(100% - 28px);
+  min-height: 36px; border-radius: 13px; padding: 8px 13px;
+  border: 1px solid rgba(255,255,255,.16); background: rgba(16,18,22,.60);
+  box-shadow: 0 4px 16px rgba(0,0,0,.15);
+  font-size: 12px; line-height: 1.2;
+}
+@supports (backdrop-filter: blur(12px)) { .ink-gesture-notice-body, .ink-gesture-level { backdrop-filter: blur(12px); } }
+.ink-gesture-time { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ink-gesture-secondary { color: rgba(255,255,255,.65); font-variant-numeric: tabular-nums; }
+.ink-gesture-delta { color: #e5ccb0; margin-left: 3px; font-variant-numeric: tabular-nums; }
+.ink-gesture-level {
+  position: absolute; z-index: 8; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 9px; width: 43px; padding: 12px 7px; border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.14); background: rgba(16,18,22,.40);
+  color: #f8f6f1; pointer-events: none;
+}
+.ink-gesture-level--brightness { left: max(12px, calc(var(--video-sal,0px) + 8px)); }
+.ink-gesture-level--volume { right: max(12px, calc(var(--video-sar,0px) + 8px)); }
+.ink-gesture-level-track { position: relative; height: clamp(54px, 19vh, 110px); width: 3px; background: rgba(255,255,255,.25); border-radius: 10px; overflow: hidden; }
+.ink-gesture-level-fill { position: absolute; bottom: 0; left: 0; width: 100%; border-radius: inherit; background: #e8ceb1; }
+.ink-gesture-level-value { font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; }
+[data-video-compact] .ink-gesture-level { display: none; }
+@media (max-height: 380px) {
+  .ink-gesture-level { width: 37px; padding: 8px 5px; gap: 5px; }
+  .ink-gesture-level-track { height: 46px; }
+  .ink-gesture-notice--top { padding-top: 42px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ink-video-top-chrome button, .ink-video-bottom-chrome button { transition: none; }
+}

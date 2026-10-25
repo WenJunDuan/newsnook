@@ -39,3 +39,7 @@
 .video-session-page-content { max-width: 960px; margin: 0 auto; padding: 16px; }
 [data-eink] .floating-video-window { box-shadow: none; border: 2px solid currentColor; }
 @media (prefers-reduced-motion: reduce) { .floating-video-window * { transition: none !important; } }
+.floating-video-window { border-color: rgba(255,255,255,.15); border-radius: 14px; box-shadow: 0 12px 38px rgba(0,0,0,.25); }
+.floating-video-titlebar { background: #17191d; border-bottom: 1px solid rgba(255,255,255,.07); }
+.floating-video-drag span { font-size: 12px; font-weight: 500; }
+.floating-video-resize { background: linear-gradient(135deg,transparent 45%,rgba(0,0,0,.45)); }
