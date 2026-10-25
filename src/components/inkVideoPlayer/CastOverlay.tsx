@@ -99,7 +99,7 @@ export function CastOverlay({
     <div
       data-theme="dark"
       data-no-page-tap=""
-      className="fixed inset-0 z-[140] flex items-end justify-center bg-black/65 backdrop-blur-sm md:items-center md:p-4"
+      className="ink-player-cast-dialog fixed inset-0 z-[140] flex items-end justify-center bg-black/40 md:items-center md:p-4"
       role="presentation"
       onClick={onClose}
     >
@@ -116,7 +116,7 @@ export function CastOverlay({
         role="dialog"
         aria-modal="true"
         aria-label={session ? '投屏遥控器' : '选择投屏设备'}
-        className="w-full max-w-md overflow-hidden rounded-t-3xl border border-haze bg-ink-raised text-paper shadow-2xl md:rounded-3xl"
+        className="ink-player-cast-panel w-full max-w-md overflow-hidden rounded-t-3xl border border-haze bg-ink-raised text-paper shadow-2xl md:rounded-3xl"
         style={{ paddingBottom: 'calc(var(--sab, 0px) + 12px)', outline: dialogRef ? 'none' : undefined }}
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
