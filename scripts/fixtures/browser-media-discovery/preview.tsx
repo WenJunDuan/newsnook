@@ -53,7 +53,7 @@ export function Preview() {
     </div>
     {panel && <BrowserSheet title="媒体资源" onClose={()=>setPanel(false)}>
       <div className="mb-3 flex items-center justify-between text-[13px] text-paper-muted"><span>发现 {count} 个资源</span><span>重新扫描</span></div>
-      {Array.from({length:Math.min(count,3)}).map((_,i)=><div key={i} className="flex min-h-[74px] items-center gap-3 border-b border-haze py-3"><Film size={20}/><div className="min-w-0 flex-1 text-[14px]">视频文件 · {1080-i*360}p</div><button type="button" aria-label={'播放 视频文件 · ' + (1080-i*360) + 'p'} onClick={()=>setPanel(false)} className="browser-media-play"><Play size={17} strokeWidth={1.8} aria-hidden="true"/>播放</button></div>)}
+      {Array.from({length:Math.min(count,3)}).map((_,i)=><div key={i} className="flex min-h-[74px] items-center gap-3 border-b border-haze py-3"><Film size={20}/><div className="min-w-0 flex-1 text-[14px]">视频文件 · {1080-i*360}p</div><button type="button" aria-label={'播放 视频文件 · ' + (1080-i*360) + 'p'} onClick={()=>setPanel(false)} className="browser-media-play" title="播放"><Play size={20} strokeWidth={1.9} aria-hidden="true"/></button></div>)}
     </BrowserSheet>}
     {address && <div role="dialog" aria-label="搜索与地址" style={{position:'absolute',inset:0,background:'rgba(0,0,0,.6)',display:'grid',placeItems:'center'}}><button onClick={()=>setAddress(false)}><X/>搜索与地址</button></div>}
   </div>
