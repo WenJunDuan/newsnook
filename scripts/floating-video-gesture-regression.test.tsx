@@ -89,6 +89,7 @@ try {
     await act(async () => { target.dispatchEvent(event); await Promise.resolve() })
   }
   const hud = (type: string) => frame.querySelector<HTMLElement>('[data-ink-hud="' + type + '"]')
+  const boostedNotice = () => frame.textContent?.includes('2.5x 快进中') === true
   const settleHud = async () => {
     await act(async () => { await delay(HUD_LINGER_MS + 85) })
     assert.equal(frame.querySelector('[data-ink-hud]'), null, 'gesture HUD must dismiss after release')
@@ -128,8 +129,36 @@ try {
   await pointer('pointerdown', 5, .54, .44)
   await act(async () => { await delay(LONG_PRESS_MS + 65) })
   assert.equal(video.playbackRate, BOOST_RATE, 'mini-player long press enables 2.5x boost')
+  assert.ok(boostedNotice(), 'the acceleration indicator only appears during active boost')
+  assert.equal(frame.querySelector('.ink-video-mini-toggle'), null, 'the big center control must not cover footage during boost')
   await pointer('pointerup', 5, .54, .44)
   assert.equal(video.playbackRate, 1, 'long press restores the user-selected rate')
+  assert.equal(boostedNotice(), false, 'normal pointer release dismisses boost indicator immediately')
+
+  // Android can send pointercancel instead of pointerup (window resize,
+  // system gesture, another finger). Cancellation must restore both rate and UI.
+  await pointer('pointerdown', 51, .54, .44)
+  await act(async () => { await delay(LONG_PRESS_MS + 65) })
+  assert.equal(video.playbackRate, BOOST_RATE)
+  await pointer('pointercancel', 51, .54, .44)
+  assert.equal(video.playbackRate, 1, 'pointercancel restores speed before gesture state is reset')
+  assert.equal(boostedNotice(), false, 'pointercancel removes 2.5x indicator')
+
+  await pointer('pointerdown', 52, .54, .44)
+  await act(async () => { await delay(LONG_PRESS_MS + 65) })
+  assert.equal(video.playbackRate, BOOST_RATE)
+  capture.get(surface)!.delete(52)
+  await pointer('lostpointercapture', 52, .54, .44)
+  assert.equal(video.playbackRate, 1, 'capture loss returns to original rate')
+  assert.equal(boostedNotice(), false, 'capture loss removes boost notice')
+
+  // If a new touch implicitly loses capture, a stale timer must NOT boost.
+  await pointer('pointerdown', 53, .54, .44)
+  capture.get(surface)!.delete(53)
+  await act(async () => { await delay(LONG_PRESS_MS + 65) })
+  assert.equal(video.playbackRate, 1, 'no acceleration when OS already released touch capture')
+  assert.equal(boostedNotice(), false)
+  await pointer('pointerup', 53, .54, .44, frame)
 
   const beforePinchWidth = Number.parseFloat(frame.style.width)
   const beforePinchTime = video.currentTime
@@ -182,6 +211,33 @@ try {
     'a lost child pointerup must not disable the following long press')
   await pointer('pointerup', 14, .43, .47)
   assert.equal(video.playbackRate, 1)
+  assert.equal(boostedNotice(), false)
+
+  // An active 2.5x boost can lose its terminal event to the floating root.
+  // The document-level fallback must see the orphan and end it immediately.
+  await pointer('pointerdown', 54, .43, .47)
+  await act(async () => { await delay(LONG_PRESS_MS + 65) })
+  assert.equal(video.playbackRate, BOOST_RATE)
+  capture.get(surface)!.delete(54)
+  await pointer('pointerup', 54, .43, .47, frame)
+  assert.equal(video.playbackRate, 1, 'outer-frame pointerup must end an orphaned boost')
+  assert.equal(boostedNotice(), false)
+
+  // Pausing and losing app focus are terminal states even if the finger remains.
+  await pointer('pointerdown', 55, .43, .47)
+  await act(async () => { await delay(LONG_PRESS_MS + 65) })
+  assert.equal(video.playbackRate, BOOST_RATE)
+  await act(async () => { video.pause(); await Promise.resolve() })
+  assert.equal(video.playbackRate, 1, 'pausing playback cancels temporary acceleration')
+  assert.equal(boostedNotice(), false)
+  await act(async () => { await video.play() })
+  await pointer('pointerdown', 56, .43, .47)
+  await act(async () => { await delay(LONG_PRESS_MS + 65) })
+  assert.equal(video.playbackRate, BOOST_RATE)
+  await act(async () => { window.dispatchEvent(new window.Event('blur')); await Promise.resolve() })
+  assert.equal(video.playbackRate, 1, 'app/window losing focus stops boost')
+  assert.equal(boostedNotice(), false)
+  assert.equal(capture.get(surface)?.size, 0, 'terminal state releases child pointer captures')
 
   assert.equal(video.paused, false, 'none of the mini-player gesture actions pause the video')
   assert.ok(frame.isConnected, 'floating frame remains attached')

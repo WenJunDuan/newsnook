@@ -87,8 +87,12 @@
 [data-floating-narrow] .floating-video-drag span { display: none; }
 .floating-video-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 2px;
+  margin-left: auto;
+  position: relative;
+  z-index: 1;
   pointer-events: auto;
 }
 .floating-video-actions button {

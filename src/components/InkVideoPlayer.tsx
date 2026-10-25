@@ -1813,10 +1813,13 @@ function InkVideoPlayerReady({
       }
     }
     if (discarded && activePointersRef.current.size === 0) {
+      endBoost()
       pinchRef.current = null
       multiTouchRef.current = false
+      setViewInteracting(false)
       clearGestureTimers()
       invalidateLevelWrites()
+      gestureRef.current = { ...IDLE_GESTURE }
       fadeHud()
     }
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -1862,7 +1865,18 @@ function InkVideoPlayerReady({
     clearGestureTimers()
     // Zoom is a viewing transform, not a reason to disable long-press boost.
     // Starting a pinch or moving past touch slop cancels this timer below.
-    longPressTimerRef.current = window.setTimeout(startBoost, LONG_PRESS_MS)
+    const pointerId = event.pointerId
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null
+      // Native WebView can implicitly release capture without delivering up
+      // to the player. A stale timer must never start an indefinite boost.
+      const surface = gestureSurfaceRef.current
+      if (gestureRef.current !== gesture || gesture.moved || gesture.axis !== 'none'
+        || multiTouchRef.current || activePointersRef.current.size !== 1
+        || !activePointersRef.current.has(pointerId)
+        || !surface?.hasPointerCapture(pointerId)) return
+      startBoost()
+    }, LONG_PRESS_MS)
     if (gestureEnabled) syncLevels(gesture)
   }
 
@@ -1982,13 +1996,17 @@ function InkVideoPlayerReady({
     }, DOUBLE_TAP_MS)
   }
 
-  const onGesturePointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const cancelGesture = () => {
+    // Restore speed BEFORE resetting the owning gesture. The old order lost
+    // the boosted flag, leaving both playbackRate and 2.5x UI stuck.
+    endBoost()
+    const surface = gestureSurfaceRef.current
     const capturedIds = Array.from(activePointersRef.current.keys())
     activePointersRef.current.clear()
-    // Cancel can arrive for just one finger of a pinch. Release the others too.
-    // Clearing the registry first prevents recursive lostpointercapture handling.
+    // Cancel may arrive for just one finger. Clear first to prevent recursive
+    // lostpointercapture handlers while returning every captured pointer.
     for (const id of capturedIds) {
-      if (event.currentTarget.hasPointerCapture(id)) event.currentTarget.releasePointerCapture(id)
+      if (surface?.hasPointerCapture(id)) surface.releasePointerCapture(id)
     }
     pinchRef.current = null
     multiTouchRef.current = false
@@ -1996,12 +2014,52 @@ function InkVideoPlayerReady({
     clearGestureTimers()
     invalidateLevelWrites()
     gestureRef.current = { ...IDLE_GESTURE }
-    // Android may deliver pointercancel during multi-touch, including when
-    // axis === none. Zoom/volume HUDs must always receive a dismissal timer.
+    // Always dismiss zoom/level HUDs when the browser cancels touch.
     fadeHud()
-    endBoost()
     revealControls()
   }
+
+  const onGesturePointerCancel = (_event: ReactPointerEvent<HTMLDivElement>) => cancelGesture()
+  const cancelGestureEvent = useEffectEvent(cancelGesture)
+
+  useEffect(() => {
+    // Native Pointer Events occasionally end on the floating frame rather than
+    // the captured child. Listen after React's bubble handlers so ordinary
+    // pointerup commits first; only orphaned pointers remain in the registry.
+    if (!gestureEnabled) {
+      if (activePointersRef.current.size > 0 || gestureRef.current.boosted) cancelGestureEvent()
+      return
+    }
+    const onTerminalPointer = (event: PointerEvent) => {
+      if (activePointersRef.current.has(event.pointerId)) cancelGestureEvent()
+    }
+    const onLastTouchEnd = (event: TouchEvent) => {
+      if (event.touches.length === 0 && activePointersRef.current.size > 0) cancelGestureEvent()
+    }
+    const onBlur = () => {
+      if (activePointersRef.current.size > 0 || gestureRef.current.boosted) cancelGestureEvent()
+    }
+    const onVisibility = () => { if (document.hidden) onBlur() }
+    const video = videoRef.current
+    document.addEventListener('pointerup', onTerminalPointer)
+    document.addEventListener('pointercancel', onTerminalPointer)
+    document.addEventListener('touchend', onLastTouchEnd)
+    document.addEventListener('touchcancel', onLastTouchEnd)
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('blur', onBlur)
+    video?.addEventListener('pause', onBlur)
+    video?.addEventListener('ended', onBlur)
+    return () => {
+      document.removeEventListener('pointerup', onTerminalPointer)
+      document.removeEventListener('pointercancel', onTerminalPointer)
+      document.removeEventListener('touchend', onLastTouchEnd)
+      document.removeEventListener('touchcancel', onLastTouchEnd)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('blur', onBlur)
+      video?.removeEventListener('pause', onBlur)
+      video?.removeEventListener('ended', onBlur)
+    }
+  }, [gestureEnabled])
 
   const progress = duration > 0 ? current / duration : 0
   const bufferRatio = duration > 0 ? Math.min(1, buffered / duration) : 0
@@ -2162,7 +2220,7 @@ function InkVideoPlayerReady({
           </div>
         )}
 
-        {ready && !fatal && !waiting && ((!playing && showChrome) || (compact && !gestureHud)) && (
+        {ready && !fatal && !waiting && !boosting && ((!playing && showChrome) || (compact && !gestureHud)) && (
           <button
             type="button"
             aria-label={playing ? '暂停' : '播放'}

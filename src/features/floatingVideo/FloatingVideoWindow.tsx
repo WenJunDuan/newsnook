@@ -25,8 +25,18 @@ export function FloatingVideoWindow({ title, active, hidden, domFullscreen, slot
       touches.current.clear()
       touchedWithTwoFingers.current = false
     }
+    const forgetTouch = (event: globalThis.PointerEvent) => {
+      touches.current.delete(event.pointerId)
+      if (touches.current.size === 0) touchedWithTwoFingers.current = false
+    }
     window.addEventListener('blur', clearTouches)
-    return () => window.removeEventListener('blur', clearTouches)
+    window.addEventListener('pointerup', forgetTouch)
+    window.addEventListener('pointercancel', forgetTouch)
+    return () => {
+      window.removeEventListener('blur', clearTouches)
+      window.removeEventListener('pointerup', forgetTouch)
+      window.removeEventListener('pointercancel', forgetTouch)
+    }
   }, [])
 
   const cancelChromeTimer = useCallback(() => {
@@ -95,6 +105,11 @@ export function FloatingVideoWindow({ title, active, hidden, domFullscreen, slot
     touchedWithTwoFingers.current = false
     pinch.onPointerCancelCapture()
   }
+  const handleLostPointerCapture = (event: PointerEvent<HTMLDivElement>) => {
+    if (!pinch.onLostPointerCaptureCapture(event)) return
+    touches.current.delete(event.pointerId)
+    if (touches.current.size === 0) touchedWithTwoFingers.current = false
+  }
 
   return <div
     data-floating-video-window={active ? '' : undefined}
@@ -109,6 +124,7 @@ export function FloatingVideoWindow({ title, active, hidden, domFullscreen, slot
     onPointerMoveCapture={pinch.onPointerMoveCapture}
     onPointerUpCapture={handlePointerUp}
     onPointerCancelCapture={handlePointerCancel}
+    onLostPointerCaptureCapture={handleLostPointerCapture}
     onPointerEnter={event => { if (event.pointerType === 'mouse' || event.pointerType === 'pen') revealChrome() }}
     onFocusCapture={revealChrome}
   >

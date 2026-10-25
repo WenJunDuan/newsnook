@@ -140,9 +140,30 @@ async function main(){
       await click('button[aria-label="媒体资源"]')
       await screenshot('landscape-sources-cdp')
     }
+    async function verifyFloatingActions() {
+      const metrics = JSON.parse(await evaluate(`JSON.stringify((()=>{
+        const frame=document.querySelector('[data-floating-video-window]');
+        const restore=frame?.querySelector('button[aria-label="恢复播放页"]');
+        const close=frame?.querySelector('button[aria-label="关闭悬浮播放"]');
+        if(!frame||!restore||!close)return null;
+        const f=frame.getBoundingClientRect(),r=restore.getBoundingClientRect(),c=close.getBoundingClientRect();
+        const hit=rect=>document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2)?.closest('button')?.getAttribute('aria-label');
+        return {frameWidth:f.width,frameRight:f.right,restoreLeft:r.left,restoreRight:r.right,
+          closeLeft:c.left,closeRight:c.right,hitRestore:hit(r),hitClose:hit(c)};
+      })())`))
+      console.log('floating corner controls',JSON.stringify(metrics))
+      if (!metrics || metrics.restoreLeft < metrics.frameRight - 91
+        || metrics.closeLeft < metrics.restoreRight - 2
+        || metrics.closeRight > metrics.frameRight - 1
+        || metrics.hitRestore !== '恢复播放页' || metrics.hitClose !== '关闭悬浮播放') {
+        throw new Error('Floating restore/close controls are not both accessible at the right edge')
+      }
+    }
     await setup(1180,850,'floating')
+    await verifyFloatingActions()
     await screenshot('floating-cdp')
     await setup(393,852,'floating')
+    await verifyFloatingActions()
     await pause(2850)
     const floatMetrics = JSON.parse(await evaluate(`JSON.stringify((()=>{const f=document.querySelector('[data-floating-video-window]');const s=f?.querySelector('[data-video-stage]');const r=f?.getBoundingClientRect();const sr=s?.getBoundingClientRect();return {width:r?.width,height:r?.height,stageHeight:sr?.height,titlebar:Boolean(f?.querySelector('.floating-video-titlebar')),actions:f?.querySelectorAll('.floating-video-actions button').length,resize:Boolean(f?.querySelector('[aria-label="调整悬浮窗口大小"]')),seekRight:f?.querySelector('.ink-seek')?.getBoundingClientRect().right,resizeLeft:f?.querySelector('.floating-video-resize')?.getBoundingClientRect().left}})())`))
     console.log('mobile floating geometry',JSON.stringify(floatMetrics))
@@ -204,11 +225,30 @@ async function main(){
     if(playbackAvailable) {
       await miniTouch('touchStart',[enlargedPt(9,.40,.55)])
       await pause(470)
-      const boosted = await evaluate(`document.querySelector('[data-floating-video-window] video').playbackRate`)
-      if(boosted!==2.5)throw new Error('Mini-player long press did not enable temporary 2.5x playback')
+      const boostState = JSON.parse(await evaluate(`JSON.stringify((()=>{
+        const f=document.querySelector('[data-floating-video-window]');
+        return {rate:f.querySelector('video').playbackRate,notice:f.textContent.includes('2.5x 快进中'),
+          centerButton:!!f.querySelector('.ink-video-mini-toggle')};
+      })())`))
+      if(boostState.rate!==2.5 || !boostState.notice || boostState.centerButton)throw new Error('Mini-player boost should show only its light HUD while holding')
       await miniTouch('touchEnd',[])
-      const restored = await evaluate(`document.querySelector('[data-floating-video-window] video').playbackRate`)
-      if(restored!==1)throw new Error('Mini-player long press failed to restore user speed')
+      await pause(90)
+      const restored = JSON.parse(await evaluate(`JSON.stringify((()=>{
+        const f=document.querySelector('[data-floating-video-window]');
+        return {rate:f.querySelector('video').playbackRate,notice:f.textContent.includes('2.5x 快进中')};
+      })())`))
+      if(restored.rate!==1 || restored.notice)throw new Error('Mini-player long press must restore speed and hide HUD immediately on touchEnd')
+      // Android can cancel a pointer instead of dispatching its normal release.
+      await miniTouch('touchStart',[enlargedPt(10,.42,.55)])
+      await pause(470)
+      if(await evaluate(`document.querySelector('[data-floating-video-window] video').playbackRate`)!==2.5)throw new Error('Second boost failed to start')
+      await miniTouch('touchCancel',[])
+      await pause(90)
+      const cancelled = JSON.parse(await evaluate(`JSON.stringify((()=>{
+        const f=document.querySelector('[data-floating-video-window]');
+        return {rate:f.querySelector('video').playbackRate,notice:f.textContent.includes('2.5x 快进中')};
+      })())`))
+      if(cancelled.rate!==1 || cancelled.notice)throw new Error('Mini-player touchCancel left 2.5x speed/HUD latched')
     }
     await send('Emulation.setTouchEmulationEnabled',{enabled:false})
     await setup(1180,850,'page')
