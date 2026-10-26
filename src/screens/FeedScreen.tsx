@@ -3,6 +3,7 @@ import { ChevronLeft, Loader2, RotateCw, Search, X } from 'lucide-react'
 
 import { ArticleRow, LeadStory } from '../components/ArticleItem'
 import { CategoryRail } from '../components/CategoryRail'
+import { FeedLayoutSwitcher } from '../components/FeedLayoutSwitcher'
 import { FeedSkeleton } from '../components/FeedSkeleton'
 import { PullIndicator } from '../components/PullIndicator'
 import { SourceFilterChips } from '../components/SourceFilterChips'
@@ -44,6 +45,8 @@ interface Props {
   showLead: boolean
   /** 主首页信息流版式；未传时保持历史经典列表。 */
   homeFeedLayout?: HomeFeedLayout
+  /** 切换首页信息流版式 */
+  onHomeFeedLayoutChange?: (layout: HomeFeedLayout) => void
   /** 内容全部来自本地缓存，尚未拿到本次联网结果 */
   offline?: boolean
   categories?: NewsCategory[]
@@ -209,6 +212,7 @@ export const FeedScreen = memo(function FeedScreen({
   prestoredIds = EMPTY_ARTICLE_IDS,
   showLead,
   homeFeedLayout = 'classic',
+  onHomeFeedLayoutChange,
   offline,
   categories,
   categoryId,
@@ -703,8 +707,36 @@ export const FeedScreen = memo(function FeedScreen({
                 </ul>
               </div>
             ))
+          ) : homeFeedLayout === 'classic' ? (
+            /* 桌面端经典单列时间线：居中舒适宽度，保持与移动端一致的经典阅读节奏 */
+            <div className="mx-auto w-full max-w-4xl px-4 py-2">
+              {grouped.map(([bucket, items]) => (
+                <div key={bucket}>
+                  <div className="flex items-center gap-2.5 pt-5 pb-2">
+                    <span className="font-mono text-[11px] font-medium tracking-[0.18em] text-paper-muted/90">{bucket}</span>
+                    <span className="h-px w-8 bg-gradient-to-r from-haze/80 to-transparent" aria-hidden />
+                  </div>
+                  <ul className="divide-y divide-haze/35">
+                    {items.map((article) => (
+                      <ArticleRow
+                        key={article.id}
+                        article={article}
+                        read={readIds.has(article.id)}
+                        saved={laterIds.has(article.id)}
+                        prestored={prestoredIds.has(article.id)}
+                        translated={translations.get(article.id)}
+                        displayMode={activeTranslationPrefs.displayMode}
+                        onOpen={onOpen}
+                        onSourceClick={onSelectSource}
+                        variant="row"
+                      />
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
           ) : (
-            /* 桌面端规则多列网格：同样连续流排布，防止多列网格被日期切碎留下大片空白 */
+            /* 桌面端规则多列网格：双栏/多栏卡片杂志流 */
             <ul className="grid grid-cols-2 gap-4 px-6 py-4 xl:grid-cols-3 2xl:grid-cols-4 min-[2100px]:grid-cols-5 xl:px-8 2xl:px-10 min-[2100px]:gap-5">
               {rest.map((article) => (
                 <ArticleRow
@@ -844,6 +876,13 @@ export const FeedScreen = memo(function FeedScreen({
               {lastUpdated ? `更新于 ${relativeTime(lastUpdated)}` : ''}
             </span>
 
+            {onHomeFeedLayoutChange && (
+              <FeedLayoutSwitcher
+                layout={homeFeedLayout}
+                onChange={onHomeFeedLayoutChange}
+              />
+            )}
+
             {onOpenLocalSearch && (
               <button
                 type="button"
@@ -860,7 +899,7 @@ export const FeedScreen = memo(function FeedScreen({
               onClick={() => void onRefresh()}
               aria-label="刷新"
               className={`relative h-8 w-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-transparent hover:border-haze/60 hover:bg-ink-raised/50 text-paper-muted transition-all hover:text-paper active:scale-95 lg:h-8 lg:w-auto lg:rounded-lg lg:border-haze/70 lg:bg-ink-raised/50 lg:px-2.5 lg:hover:border-paper-faint/30 lg:hover:bg-ink-raised ${
-                isBrandedHome && !useCompactCards ? 'hidden lg:flex' : 'flex'
+                isBrandedHome ? 'hidden lg:flex' : 'flex'
               }`}
             >
               <RotateCw

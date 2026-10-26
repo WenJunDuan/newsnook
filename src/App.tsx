@@ -730,6 +730,10 @@ export default function App() {
         return
       }
       if (settingsRoute) {
+        if (readerReturnArticle && settingsRoute.name === 'translation') {
+          restoreReaderFromSettings()
+          return
+        }
         setSettingsRoute(null)
         return
       }
@@ -1424,7 +1428,13 @@ export default function App() {
         <TranslationScreen
           prefs={prefs.translation}
           onChange={(translation) => update((prev) => ({ ...prev, translation }))}
-          onBack={() => setSettingsRoute(null)}
+          onBack={() => {
+            if (readerReturnArticle) {
+              restoreReaderFromSettings()
+            } else {
+              setSettingsRoute(null)
+            }
+          }}
           onOpenAiSettings={() => setSettingsRoute({ name: 'ai', returnTo: 'translation' })}
         />
       )
@@ -2126,6 +2136,20 @@ export default function App() {
             onCacheChange={handleBodyCacheChange}
             overlayCloserRef={readerOverlayCloserRef}
             translationPrefs={prefs.translation}
+            onTranslationPrefsChange={(patch) =>
+              update((prev) => ({
+                ...prev,
+                translation: { ...prev.translation, ...patch },
+              }))
+            }
+            onOpenTranslationSettings={() => {
+              setReaderReturnArticle(reading)
+              setReaderReturnSiteId(activeSiteId)
+              if (activeSiteId) leaveActiveSite()
+              setReading(null)
+              setSettingsRoute({ name: 'translation' })
+              setTab('me')
+            }}
             readAloudPrefs={prefs.readAloud}
             customSources={prefs.customSources}
             einkMode={Boolean(prefs.einkMode)}

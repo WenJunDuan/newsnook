@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from 'react'
 import { Browser } from '@capacitor/browser'
 import { Capacitor } from '@capacitor/core'
-import { ArrowLeft, BookmarkCheck, BookmarkPlus, Globe, Languages, LoaderCircle, MessageSquare, MoreHorizontal, RefreshCw, ScrollText, Volume2, X } from 'lucide-react'
+import { ArrowLeft, BookmarkCheck, BookmarkPlus, ChevronDown, Globe, Languages, LoaderCircle, MessageSquare, MoreHorizontal, RefreshCw, ScrollText, Volume2, X } from 'lucide-react'
 
 import { AiSpeedReadPanel } from '../components/AiSpeedReadPanel'
 import { ImageLightbox } from '../components/ImageLightbox'
@@ -9,6 +9,8 @@ import { collectImageGallery, type ImageGallery } from '../lib/imageGallery'
 import { EinkReaderMenu } from '../components/EinkReaderMenu'
 import { ReaderMoreMenu } from '../components/ReaderMoreMenu'
 import { ReaderScrollIndicator } from '../components/ReaderScrollIndicator'
+import { ReaderTranslationBar } from '../components/ReaderTranslationBar'
+import { ReaderTranslationMenu, type ReaderTranslationMode } from '../components/ReaderTranslationMenu'
 import { ShareArticleSheet } from '../components/ShareArticleSheet'
 import { InkAudioPlayer } from '../components/InkAudioPlayer'
 import { InkImage } from '../components/InkImage'
@@ -72,7 +74,11 @@ import {
   translationLanguageLabel,
   translationProviderLabel,
 } from '../features/translation/config'
-import type { TranslatedArticleContent, TranslationPrefs } from '../features/translation/types'
+import type {
+  TranslatedArticleContent,
+  TranslationDisplayMode,
+  TranslationPrefs,
+} from '../features/translation/types'
 import { hasSpeedReadableText } from '../features/speedRead/service'
 import { useSpeedRead } from '../features/speedRead/useSpeedRead'
 import { ReadAloudBar } from '../features/readAloud/ReadAloudBar'
@@ -94,6 +100,8 @@ interface Props {
   /** 返回 true 表示已消费系统返回（例如关闭大图），供 App 回退栈使用 */
   overlayCloserRef?: MutableRefObject<(() => boolean) | null>
   translationPrefs: TranslationPrefs
+  onTranslationPrefsChange?: (patch: Partial<TranslationPrefs>) => void
+  onOpenTranslationSettings?: () => void
   readAloudPrefs: ReadAloudPrefs
   customSources?: NewsSource[]
   /** 墨水屏模式：分页阅读；false/缺省时保持滚动阅读 */
@@ -121,6 +129,8 @@ export function ReaderScreen({
   onCacheChange,
   overlayCloserRef,
   translationPrefs,
+  onTranslationPrefsChange,
+  onOpenTranslationSettings,
   readAloudPrefs,
   customSources,
   einkMode = false,
@@ -180,6 +190,34 @@ export function ReaderScreen({
   const pendingPartialRef = useRef<TranslatedArticleContent | null>(null)
   const partialFrameRef = useRef(0)
   const [exportingMarkdown, setExportingMarkdown] = useState(false)
+  const [activeDisplayMode, setActiveDisplayMode] = useState<TranslationDisplayMode>(
+    translationPrefs.displayMode,
+  )
+  const [translationMenuOpen, setTranslationMenuOpen] = useState(false)
+  const [translationBarDismissed, setTranslationBarDismissed] = useState(false)
+
+  useEffect(() => {
+    setActiveDisplayMode(translationPrefs.displayMode)
+  }, [translationPrefs.displayMode])
+
+  const currentTranslationMode: ReaderTranslationMode = !showTranslation
+    ? 'original'
+    : activeDisplayMode === 'compare'
+      ? 'compare'
+      : 'replace'
+
+  const handleSelectTranslationMode = useCallback(
+    (mode: ReaderTranslationMode) => {
+      if (mode === 'original') {
+        setShowTranslation(false)
+      } else {
+        setActiveDisplayMode(mode)
+        setShowTranslation(true)
+        onTranslationPrefsChange?.({ displayMode: mode })
+      }
+    },
+    [onTranslationPrefsChange],
+  )
 
   const canComment = useMemo(
     () => supportsComments({ ...article, originUrl: resolvedOriginUrl || article.originUrl }),
@@ -263,6 +301,16 @@ export function ReaderScreen({
 
   useEffect(() => {
     if (!overlayCloserRef) return
+    if (translationMenuOpen) {
+      const prev = overlayCloserRef.current
+      overlayCloserRef.current = () => {
+        setTranslationMenuOpen(false)
+        return true
+      }
+      return () => {
+        overlayCloserRef.current = prev
+      }
+    }
     if (shareSheetOpen) {
       const prev = overlayCloserRef.current
       overlayCloserRef.current = () => {
@@ -303,7 +351,14 @@ export function ReaderScreen({
         overlayCloserRef.current = prev
       }
     }
-  }, [commentsOpen, einkMenuOpen, moreMenuOpen, overlayCloserRef, shareSheetOpen])
+  }, [
+    commentsOpen,
+    einkMenuOpen,
+    moreMenuOpen,
+    overlayCloserRef,
+    shareSheetOpen,
+    translationMenuOpen,
+  ])
 
   const handleScroll = useCallback(() => {
     if (einkMode) return
@@ -542,7 +597,6 @@ export function ReaderScreen({
     setTranslationError('')
   }, [
     article.id,
-    translationPrefs.displayMode,
     translationPrefs.provider,
     translationPrefs.sourceLanguage,
     translationPrefs.targetLanguage,
@@ -725,7 +779,13 @@ export function ReaderScreen({
     }
   }, [article.id, loadState, reduced])
 
-  const displayedHtml = showTranslation && translated ? translated.html : html
+  const displayedHtml = useMemo(() => {
+    if (!showTranslation || !translated) return html
+    if (activeDisplayMode === 'compare') {
+      return translated.compareHtml || translated.html
+    }
+    return translated.replaceHtml || translated.html
+  }, [showTranslation, translated, activeDisplayMode, html])
   useEffect(() => {
     if (
       loadState !== 'ready' ||
@@ -790,7 +850,7 @@ export function ReaderScreen({
     setUnlockedMediaUrls((prev) => (prev.includes(url) ? prev : [...prev, url]))
   }, [])
   const comparing = Boolean(
-    showTranslation && translated && translationPrefs.displayMode === 'compare',
+    showTranslation && translated && activeDisplayMode === 'compare',
   )
   /** 分享深链没带标题，靠正文抽取补；抽取失败就换个中性说法，别一直显示占位 */
   const pendingTitle =
@@ -1260,17 +1320,9 @@ export function ReaderScreen({
       return
     }
 
-    // 2. 如果当前正在显示译文，点击直接切回原文；报错状态除外——那时按钮语义是「重试」，落到下方重新翻译
-    if (showTranslation && translationState !== 'error') {
-      setShowTranslation(false)
-      setTranslationError('')
-      return
-    }
-
-    // 3. 如果已有完整译文且空闲，直接切换展示
+    // 2. 如果已有完整译文且空闲，点击切换菜单打开/关闭
     if (translated && translationState === 'idle') {
-      setShowTranslation(true)
-      setTranslationError('')
+      setTranslationMenuOpen((prev) => !prev)
       return
     }
 
@@ -1280,7 +1332,7 @@ export function ReaderScreen({
     setTranslationState('loading')
     setTranslationError('')
     setShowTranslation(true)
-    setTranslated({ title: article.title, html })
+    setTranslated({ title: article.title, html, compareHtml: html, replaceHtml: html })
     let latestPartial: TranslatedArticleContent | null = null
     try {
       const flushPartial = () => {
@@ -1292,7 +1344,7 @@ export function ReaderScreen({
       const result = await translationService.translateArticle(
         article.title,
         html,
-        translationPrefs,
+        { ...translationPrefs, displayMode: 'compare' },
         {
           signal: controller.signal,
           onPartial: (partial) => {
@@ -1384,26 +1436,58 @@ export function ReaderScreen({
             <div className="flex shrink-0 items-center gap-1">
               <button
                 type="button"
-                disabled={loadState !== 'ready' || translationState === 'loading'}
+                disabled={loadState !== 'ready'}
                 onClick={() => void toggleTranslation()}
-                aria-pressed={showTranslation}
-                aria-label={showTranslation ? '显示原文' : '翻译文章'}
-                className="flex h-9 items-center gap-1 px-1 transition-colors duration-200 disabled:opacity-40"
+                aria-expanded={translationMenuOpen}
+                aria-haspopup="dialog"
+                aria-label={
+                  translationState === 'loading'
+                    ? '取消翻译'
+                    : translationState === 'error'
+                      ? '重新翻译'
+                      : translated
+                        ? `译文显示方式（当前：${currentTranslationMode === 'original' ? '原文' : currentTranslationMode === 'compare' ? '双语对照' : '仅显示译文'}）`
+                        : '翻译正文'
+                }
+                className={`flex h-9 items-center gap-1 px-1.5 rounded-lg transition-colors duration-200 disabled:opacity-40 ${
+                  translationMenuOpen ? 'bg-paper/10' : 'hover:bg-paper/5'
+                }`}
               >
                 {translationState === 'loading' ? (
                   <LoaderCircle size={14} strokeWidth={1.7} className="animate-spin text-cinnabar-soft" />
                 ) : (
-                  <Languages size={14} strokeWidth={1.7} className={showTranslation ? 'text-cinnabar' : 'text-paper-muted'} />
+                  <Languages
+                    size={14}
+                    strokeWidth={1.7}
+                    className={showTranslation ? 'text-cinnabar' : 'text-paper-muted'}
+                  />
                 )}
-                <span className={`font-mono text-[10px] tracking-[0.08em] ${showTranslation ? 'text-cinnabar-soft' : 'text-paper-muted'}`}>
+                <span
+                  className={`font-mono text-[10px] tracking-[0.08em] ${
+                    showTranslation ? 'text-cinnabar-soft font-medium' : 'text-paper-muted'
+                  }`}
+                >
                   {translationState === 'loading'
                     ? '翻译中'
                     : translationState === 'error'
                       ? '重试'
-                      : showTranslation
-                        ? '原文'
-                        : '翻译'}
+                      : !translated
+                        ? '翻译'
+                        : currentTranslationMode === 'original'
+                          ? '原文'
+                          : currentTranslationMode === 'compare'
+                            ? '双语'
+                            : '译文'}
                 </span>
+                {translated && (
+                  <ChevronDown
+                    size={11}
+                    strokeWidth={2}
+                    className={`text-paper-faint transition-transform duration-200 ${
+                      translationMenuOpen ? 'rotate-180 text-cinnabar-soft' : ''
+                    }`}
+                  />
+                )}
               </button>
               {canSpeedRead && (
                 <button
@@ -1877,10 +1961,31 @@ export function ReaderScreen({
           saved={saved}
           translating={translationState === 'loading'}
           showTranslation={showTranslation}
+          translationMode={currentTranslationMode}
           onClose={() => setEinkMenuOpen(false)}
           onFontScale={(next) => onTypographyChange?.({ fontScale: next })}
           onJumpPage={(index) => paged.setPageIndex(index)}
-          onToggleTranslation={() => void toggleTranslation()}
+          onToggleTranslation={() => {
+            if (translationState === 'loading') {
+              cancelTranslation()
+              setTranslated(null)
+              setTranslationState('idle')
+              setTranslationError('')
+              setShowTranslation(false)
+              return
+            }
+            if (!translated) {
+              void toggleTranslation()
+              return
+            }
+            if (currentTranslationMode === 'compare') {
+              handleSelectTranslationMode('replace')
+            } else if (currentTranslationMode === 'replace') {
+              handleSelectTranslationMode('original')
+            } else {
+              handleSelectTranslationMode('compare')
+            }
+          }}
           onToggleLater={() => onToggleLater(laterArticle)}
           onShare={openShareSheet}
           onBackToList={onClose}
@@ -1907,6 +2012,25 @@ export function ReaderScreen({
         onReextract={() => {
           setMoreMenuOpen(false)
           setRetryToken((token) => token + 1)
+        }}
+      />
+
+      <ReaderTranslationMenu
+        open={translationMenuOpen}
+        onClose={() => setTranslationMenuOpen(false)}
+        currentMode={currentTranslationMode}
+        onSelectMode={handleSelectTranslationMode}
+        translationPrefs={translationPrefs}
+        resolvedSourceLanguage={translated?.resolvedSourceLanguage}
+        hasError={translationState === 'error'}
+        errorMessage={translationError}
+        onRetry={() => {
+          setTranslationMenuOpen(false)
+          void toggleTranslation()
+        }}
+        onOpenSettings={() => {
+          setTranslationMenuOpen(false)
+          onOpenTranslationSettings?.()
         }}
       />
 
@@ -1961,6 +2085,23 @@ export function ReaderScreen({
             </span>
           )}
         </div>
+      )}
+
+      {/* 正文内悬浮翻译模式切换胶囊（大拇指触手可及，0ms 瞬间切换） */}
+      {translated && !einkMode && !translationBarDismissed && (
+        <ReaderTranslationBar
+          visible={
+            pillVisible &&
+            !translationMenuOpen &&
+            !commentsOpen &&
+            !shareSheetOpen &&
+            !speedReadOpen &&
+            !lightbox
+          }
+          currentMode={currentTranslationMode}
+          onSelectMode={handleSelectTranslationMode}
+          onDismiss={() => setTranslationBarDismissed(true)}
+        />
       )}
 
       {/* 底部右下角悬浮跟贴胶囊（随时一触即达） */}

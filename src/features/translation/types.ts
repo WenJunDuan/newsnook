@@ -108,6 +108,10 @@ export interface TranslationProvider {
 export interface TranslatedArticleContent {
   title: string
   html: string
+  /** 双语对照排版 HTML（保留原文并在各语义段落后追加 .reader-translation） */
+  compareHtml?: string
+  /** 仅显示译文排版 HTML（以译文段落替换原文，保留媒体节点） */
+  replaceHtml?: string
   /** 实际用于翻译的原文语言（auto 解析后）；云端 auto 时可能仍为 auto */
   resolvedSourceLanguage?: TranslationSourceLanguage
   /** 本地检测置信不足或不支持时已回退英语 */
