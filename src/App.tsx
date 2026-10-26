@@ -1833,6 +1833,8 @@ export default function App() {
           laterIds={laterIds}
           prestoredIds={prestore.articleIds}
           showLead={false}
+          homeFeedLayout={prefs.homeFeedLayout}
+          onHomeFeedLayoutChange={(layout) => update((prev) => setHomeFeedLayout(prev, layout))}
           offline={offline}
           translationPrefs={prefs.translation}
           customSources={prefs.customSources}
@@ -1942,6 +1944,7 @@ export default function App() {
         prestoredIds={prestore.articleIds}
         showLead
         homeFeedLayout={prefs.homeFeedLayout}
+        onHomeFeedLayoutChange={(layout) => update((prev) => setHomeFeedLayout(prev, layout))}
         offline={offline}
         categories={categories}
         categoryId={categoryId}
