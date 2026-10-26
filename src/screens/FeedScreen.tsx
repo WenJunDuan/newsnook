@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { ChevronLeft, Loader2, RotateCw, Search, X } from 'lucide-react'
 
 import { ArticleRow, LeadStory } from '../components/ArticleItem'
+import { BrandLogo } from '../components/BrandLogo'
 import { CategoryRail } from '../components/CategoryRail'
 import { FeedLayoutSwitcher } from '../components/FeedLayoutSwitcher'
 import { FeedSkeleton } from '../components/FeedSkeleton'
@@ -25,6 +26,7 @@ import { catalogSearchRequest } from '../features/siteCatalog/requests'
 import { RECOMMEND_CATEGORY_ID, type CategoryId, type NewsCategory } from '../sources/categories'
 import type { HomeFeedLayout } from '../sources/preferences'
 import { findSource, type NewsSource } from '../sources/registry'
+import type { ResolvedTheme } from '../lib/theme'
 
 const EMPTY_ARTICLE_IDS: ReadonlySet<string> = new Set()
 
@@ -81,6 +83,7 @@ interface Props {
   /** 递增时触发与下拉相同的刷新动画与加载（底栏双击速闻） */
   pullRefreshSeq?: number
   catalogSource?: NewsSource
+  resolvedTheme?: ResolvedTheme
 }
 
 /** 邻页预览：排版与正式列表对齐，并恢复该分类上次滚动位置，避免滑入时先顶后跳 */
@@ -238,6 +241,7 @@ export const FeedScreen = memo(function FeedScreen({
   onOpenLocalSearch,
   pullRefreshSeq = 0,
   catalogSource,
+  resolvedTheme,
 }: Props) {
   const isDesktop = useIsDesktop()
   const reduced = useReducedMotion()
@@ -841,30 +845,60 @@ export const FeedScreen = memo(function FeedScreen({
                 <ChevronLeft size={18} strokeWidth={1.5} className="text-paper-muted" />
               </button>
             )}
-            {title === '有所闻' && onBrandTap ? (
-              <button
-                type="button"
-                onClick={onBrandTap}
-                className="shrink-0 font-display text-paper text-[23px] leading-none tracking-[0.015em] md:text-[20px] lg:text-[22px]"
-              >
-                {title}
-              </button>
+            {isBrandedHome ? (
+              <div className="flex min-w-0 items-center gap-2.5">
+                {onBrandTap ? (
+                  <button
+                    type="button"
+                    onClick={onBrandTap}
+                    aria-label="有所闻 - 返回顶部"
+                    className="group flex min-w-0 items-center gap-2.5 transition-opacity hover:opacity-85 active:scale-[0.99] focus:outline-hidden"
+                  >
+                    <BrandLogo
+                      resolvedTheme={resolvedTheme}
+                      size={32}
+                      className="h-8 w-8 shrink-0 object-contain transition-transform duration-200 group-hover:scale-105 active:scale-95"
+                    />
+                    <span className="truncate font-display text-[13px] sm:text-[13.5px] font-normal tracking-[0.03em] text-paper-muted group-hover:text-paper transition-colors leading-none">
+                      更大的世界，更好的判断
+                    </span>
+                    <span className="sr-only">有所闻</span>
+                  </button>
+                ) : (
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <BrandLogo
+                      resolvedTheme={resolvedTheme}
+                      size={32}
+                      className="h-8 w-8 shrink-0 object-contain"
+                    />
+                    <span className="truncate font-display text-[13px] sm:text-[13.5px] font-normal tracking-[0.03em] text-paper-muted leading-none">
+                      更大的世界，更好的判断
+                    </span>
+                    <span className="sr-only">有所闻</span>
+                  </div>
+                )}
+                <div className="hidden lg:flex items-center gap-2.5 pl-2.5 border-l border-haze/60">
+                  <p className="min-w-0 truncate font-mono text-[11px] lg:text-[11.5px] tracking-[0.12em] text-paper-faint">
+                    {activeCategory?.caption || caption}
+                  </p>
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full border border-haze/80 bg-ink-raised/60 text-[9.5px] lg:text-[10px] font-mono text-paper-faint">
+                    {articles.length} 篇
+                  </span>
+                </div>
+              </div>
             ) : (
-              <h1 className="shrink-0 font-display text-[19px] sm:text-[20px] leading-tight text-paper md:text-[20px] lg:text-[22px]">
-                {title}
-              </h1>
+              <div className="flex min-w-0 items-center gap-2">
+                <h1 className="shrink-0 font-display text-[19px] sm:text-[20px] leading-tight text-paper md:text-[20px] lg:text-[22px]">
+                  {title}
+                </h1>
+                <p className="hidden md:inline-block min-w-0 truncate font-mono text-[11px] lg:text-[11.5px] tracking-[0.12em] text-paper-faint">
+                  {activeCategory?.caption || caption}
+                </p>
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full border border-haze/80 bg-ink-raised/60 text-[9.5px] lg:text-[10px] font-mono text-paper-faint">
+                  {articles.length} 篇
+                </span>
+              </div>
             )}
-            {isBrandedHome && (
-              <span className="hidden min-[360px]:inline-block max-w-[9.5rem] truncate font-mono text-[9px] tracking-[0.08em] text-paper-faint md:hidden">
-                更大的世界，更好的判断
-              </span>
-            )}
-            <p className="hidden md:inline-block min-w-0 truncate font-mono text-[11px] lg:text-[11.5px] tracking-[0.12em] text-paper-faint">
-              {activeCategory?.caption || caption}
-            </p>
-            <span className={`${isBrandedHome ? 'hidden lg:inline-flex' : 'inline-flex'} items-center px-1.5 py-0.5 rounded-full border border-haze/80 bg-ink-raised/60 text-[9.5px] lg:text-[10px] font-mono text-paper-faint`}>
-              {articles.length} 篇
-            </span>
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
@@ -884,9 +918,9 @@ export const FeedScreen = memo(function FeedScreen({
                 type="button"
                 onClick={onOpenLocalSearch}
                 aria-label="本地搜索已缓存内容"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent hover:border-haze/60 hover:bg-ink-raised/50 lg:rounded-lg lg:border-haze/70 lg:bg-ink-raised/50 lg:hover:bg-ink-raised lg:hover:border-paper-faint/30 transition-all text-paper-muted hover:text-paper"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent hover:border-haze/60 hover:bg-ink-raised/50 lg:rounded-lg lg:border-haze/70 lg:bg-ink-raised/50 lg:hover:bg-ink-raised lg:hover:border-paper-faint/30 transition-all text-paper-muted hover:text-paper active:scale-95"
               >
-                <Search size={14.5} strokeWidth={1.6} />
+                <Search size={16} strokeWidth={1.7} />
               </button>
             )}
 
@@ -899,8 +933,8 @@ export const FeedScreen = memo(function FeedScreen({
               }`}
             >
               <RotateCw
-                size={14.5}
-                strokeWidth={1.6}
+                size={15.5}
+                strokeWidth={1.7}
                 className={`text-paper-muted ${refreshing ? 'animate-spin text-cinnabar' : ''}`}
               />
               <span className="hidden lg:inline font-mono text-[11px] text-paper-muted">

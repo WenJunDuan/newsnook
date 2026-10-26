@@ -51,10 +51,10 @@ export const FeedLayoutSwitcher = memo(function FeedLayoutSwitcher({
         title="双栏卡片"
         onClick={() => handleSelect('cards')}
         className={`relative z-10 flex h-[27px] w-[27px] items-center justify-center rounded-full transition-colors duration-200 active:scale-95 ${
-          isCards ? 'text-cinnabar' : 'text-paper-faint hover:text-paper-muted'
+          isCards ? 'text-cinnabar' : 'text-paper-muted/80 hover:text-paper'
         }`}
       >
-        <LayoutGrid size={13.5} strokeWidth={isCards ? 2 : 1.5} />
+        <LayoutGrid size={14} strokeWidth={1.7} />
       </button>
 
       {/* 经典列表 */}
@@ -66,10 +66,10 @@ export const FeedLayoutSwitcher = memo(function FeedLayoutSwitcher({
         title="经典列表"
         onClick={() => handleSelect('classic')}
         className={`relative z-10 flex h-[27px] w-[27px] items-center justify-center rounded-full transition-colors duration-200 active:scale-95 ${
-          !isCards ? 'text-cinnabar' : 'text-paper-faint hover:text-paper-muted'
+          !isCards ? 'text-cinnabar' : 'text-paper-muted/80 hover:text-paper'
         }`}
       >
-        <List size={14} strokeWidth={!isCards ? 2 : 1.5} />
+        <List size={14} strokeWidth={1.7} />
       </button>
     </div>
   )

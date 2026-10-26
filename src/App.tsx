@@ -1842,6 +1842,7 @@ export default function App() {
           onLoadMore={() => void loadMore([focusSource.id])}
           onOpen={openArticle}
           onBack={closeSourceFeed}
+          resolvedTheme={resolvedTheme}
           catalogSource={focusSource.kind === 'web-catalog' ? focusSource : undefined}
         />
       )
@@ -1945,6 +1946,7 @@ export default function App() {
         showLead
         homeFeedLayout={prefs.homeFeedLayout}
         onHomeFeedLayoutChange={(layout) => update((prev) => setHomeFeedLayout(prev, layout))}
+        resolvedTheme={resolvedTheme}
         offline={offline}
         categories={categories}
         categoryId={categoryId}
