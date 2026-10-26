@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, startTransition, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 
@@ -2012,8 +2012,10 @@ export default function App() {
           onNavigateLater={() => setSettingsRoute({ name: 'later' })}
           onNavigateHistory={() => setSettingsRoute({ name: 'history' })}
           onNavigateSettings={() => {
-            setTab('me')
-            setSettingsRoute(null)
+            startTransition(() => {
+              setTab('me')
+              setSettingsRoute(null)
+            })
           }}
           onNavigateAbout={() => setSettingsRoute({ name: 'about' })}
           onBrandTap={onBrandTap}
@@ -2070,7 +2072,7 @@ export default function App() {
             </Suspense>
           ) : (
             <>
-              <Suspense fallback={<StartupPending pending={mainSurfaceVisible && !settingsRoute}><div role="status" className="page-x py-4 text-sm text-paper-muted">正在打开页面…</div></StartupPending>}>
+              <Suspense fallback={<StartupPending pending={mainSurfaceVisible && !settingsRoute}><div role="status" className="page-x min-h-0 flex-1 py-4 text-sm text-paper-muted">正在打开页面…</div></StartupPending>}>
                 {renderTab()}
               </Suspense>
 
@@ -2086,10 +2088,13 @@ export default function App() {
                   laterCount={later.length}
                   hasUpdate={appUpdate.hasUpdate}
                   onChange={(key) => {
-                    setFocusSourceId(null)
-                    setFocusReturnRoute(null)
-                    if (key !== 'me') setReaderReturnArticle(null)
-                    setTab(key)
+                    // Preserve the current surface until a cold lazy tab is ready.
+                    startTransition(() => {
+                      setFocusSourceId(null)
+                      setFocusReturnRoute(null)
+                      if (key !== 'me') setReaderReturnArticle(null)
+                      setTab(key)
+                    })
                   }}
                   onTodayDoubleTap={() => setTodayPullRefreshSeq((seq) => seq + 1)}
                   presetSwitcher={presetSwitcherConfig}
