@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { ChevronLeft, Loader2, RotateCw, Search, X } from 'lucide-react'
 
 import { ArticleRow, LeadStory } from '../components/ArticleItem'
+import { BrandSeal } from '../components/BrandSeal'
 import { CategoryRail } from '../components/CategoryRail'
 import { FeedLayoutSwitcher } from '../components/FeedLayoutSwitcher'
 import { FeedSkeleton } from '../components/FeedSkeleton'
@@ -241,7 +242,7 @@ export const FeedScreen = memo(function FeedScreen({
 }: Props) {
   const isDesktop = useIsDesktop()
   const reduced = useReducedMotion()
-  const isBrandedHome = title === '有所闻' && Boolean(onBrandTap)
+  const isBrandedHome = title === '有所闻'
   const useCompactCards = !isDesktop && homeFeedLayout === 'cards'
   const listRef = useRef<HTMLDivElement>(null)
   const pulseRef = useRef<HTMLSpanElement>(null)
@@ -833,38 +834,82 @@ export const FeedScreen = memo(function FeedScreen({
 
   return (
     <section className="relative flex min-h-0 flex-1 flex-col">
-      <header className="relative z-20 shrink-0 bg-ink/90 pt-2 pb-1.5 backdrop-blur-xl border-b border-haze/30">
+      <header className="relative z-20 shrink-0 bg-ink/90 pt-2.5 pb-2 backdrop-blur-xl border-b border-haze/30">
         <div className="page-x lg:px-6 xl:px-8 2xl:px-10 max-w-[2400px] mx-auto flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2.5">
             {onBack && (
               <button type="button" onClick={onBack} aria-label="返回" className="-ml-1 p-1 hover:text-paper">
                 <ChevronLeft size={18} strokeWidth={1.5} className="text-paper-muted" />
               </button>
             )}
-            {title === '有所闻' && onBrandTap ? (
-              <button
-                type="button"
-                onClick={onBrandTap}
-                className="shrink-0 font-display text-paper text-[23px] leading-none tracking-[0.015em] md:text-[20px] lg:text-[22px]"
-              >
-                {title}
-              </button>
+            {isBrandedHome ? (
+              <div className="flex min-w-0 items-center gap-2.5">
+                {onBrandTap ? (
+                  <button
+                    type="button"
+                    onClick={onBrandTap}
+                    aria-label="有所闻 - 返回顶部或切换频道"
+                    className="group flex min-w-0 items-center gap-2.5 text-left focus:outline-hidden transition-opacity hover:opacity-90 active:scale-[0.98]"
+                  >
+                    <BrandSeal
+                      size={29}
+                      className="transition-transform duration-200 group-hover:scale-105 group-active:scale-95"
+                    />
+                    <div className="flex min-w-0 flex-col justify-center">
+                      <div className="flex items-baseline gap-1.5 leading-none">
+                        <span className="font-display text-[18px] sm:text-[19.5px] font-medium tracking-[0.02em] text-paper">
+                          {title}
+                        </span>
+                        <span className="hidden min-[380px]:inline-block font-mono text-[8px] sm:text-[8.5px] font-semibold tracking-[0.16em] text-cinnabar/85 uppercase">
+                          NEWSNOOK
+                        </span>
+                      </div>
+                      <span className="mt-1 truncate font-mono text-[9px] sm:text-[9.5px] tracking-[0.06em] text-paper-faint leading-none">
+                        更大的世界，更好的判断
+                      </span>
+                    </div>
+                  </button>
+                ) : (
+                  <div className="flex min-w-0 items-center gap-2.5 text-left">
+                    <BrandSeal size={29} />
+                    <div className="flex min-w-0 flex-col justify-center">
+                      <div className="flex items-baseline gap-1.5 leading-none">
+                        <span className="font-display text-[18px] sm:text-[19.5px] font-medium tracking-[0.02em] text-paper">
+                          {title}
+                        </span>
+                        <span className="hidden min-[380px]:inline-block font-mono text-[8px] sm:text-[8.5px] font-semibold tracking-[0.16em] text-cinnabar/85 uppercase">
+                          NEWSNOOK
+                        </span>
+                      </div>
+                      <span className="mt-1 truncate font-mono text-[9px] sm:text-[9.5px] tracking-[0.06em] text-paper-faint leading-none">
+                        更大的世界，更好的判断
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="hidden lg:flex items-center gap-2 pl-3 border-l border-haze/50">
+                  <p className="min-w-0 truncate font-mono text-[11px] lg:text-[11.5px] tracking-[0.12em] text-paper-faint">
+                    {activeCategory?.caption || caption}
+                  </p>
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full border border-haze/80 bg-ink-raised/60 text-[9.5px] lg:text-[10px] font-mono text-paper-faint">
+                    {articles.length} 篇
+                  </span>
+                </div>
+              </div>
             ) : (
-              <h1 className="shrink-0 font-display text-[19px] sm:text-[20px] leading-tight text-paper md:text-[20px] lg:text-[22px]">
-                {title}
-              </h1>
+              <div className="flex min-w-0 items-center gap-2">
+                <h1 className="shrink-0 font-display text-[19px] sm:text-[20px] leading-tight text-paper md:text-[20px] lg:text-[22px]">
+                  {title}
+                </h1>
+                <p className="hidden md:inline-block min-w-0 truncate font-mono text-[11px] lg:text-[11.5px] tracking-[0.12em] text-paper-faint">
+                  {activeCategory?.caption || caption}
+                </p>
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full border border-haze/80 bg-ink-raised/60 text-[9.5px] lg:text-[10px] font-mono text-paper-faint">
+                  {articles.length} 篇
+                </span>
+              </div>
             )}
-            {isBrandedHome && (
-              <span className="hidden min-[360px]:inline-block max-w-[9.5rem] truncate font-mono text-[9px] tracking-[0.08em] text-paper-faint md:hidden">
-                更大的世界，更好的判断
-              </span>
-            )}
-            <p className="hidden md:inline-block min-w-0 truncate font-mono text-[11px] lg:text-[11.5px] tracking-[0.12em] text-paper-faint">
-              {activeCategory?.caption || caption}
-            </p>
-            <span className={`${isBrandedHome ? 'hidden lg:inline-flex' : 'inline-flex'} items-center px-1.5 py-0.5 rounded-full border border-haze/80 bg-ink-raised/60 text-[9.5px] lg:text-[10px] font-mono text-paper-faint`}>
-              {articles.length} 篇
-            </span>
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
@@ -884,9 +929,9 @@ export const FeedScreen = memo(function FeedScreen({
                 type="button"
                 onClick={onOpenLocalSearch}
                 aria-label="本地搜索已缓存内容"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent hover:border-haze/60 hover:bg-ink-raised/50 lg:rounded-lg lg:border-haze/70 lg:bg-ink-raised/50 lg:hover:bg-ink-raised lg:hover:border-paper-faint/30 transition-all text-paper-muted hover:text-paper"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-haze/70 bg-ink-raised/60 hover:bg-ink-raised hover:border-paper-faint/40 shadow-xs transition-all text-paper-muted hover:text-paper active:scale-95 lg:rounded-lg lg:border-haze/70 lg:bg-ink-raised/60"
               >
-                <Search size={14.5} strokeWidth={1.6} />
+                <Search size={14} strokeWidth={1.7} />
               </button>
             )}
 
@@ -894,13 +939,13 @@ export const FeedScreen = memo(function FeedScreen({
               type="button"
               onClick={() => void onRefresh()}
               aria-label="刷新"
-              className={`relative h-8 w-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-transparent hover:border-haze/60 hover:bg-ink-raised/50 text-paper-muted transition-all hover:text-paper active:scale-95 lg:h-8 lg:w-auto lg:rounded-lg lg:border-haze/70 lg:bg-ink-raised/50 lg:px-2.5 lg:hover:border-paper-faint/30 lg:hover:bg-ink-raised ${
+              className={`relative h-8 w-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-haze/70 bg-ink-raised/60 hover:bg-ink-raised hover:border-paper-faint/40 text-paper-muted transition-all hover:text-paper active:scale-95 lg:h-8 lg:w-auto lg:rounded-lg lg:border-haze/70 lg:bg-ink-raised/60 lg:px-2.5 shadow-xs ${
                 isBrandedHome ? 'hidden lg:flex' : 'flex'
               }`}
             >
               <RotateCw
-                size={14.5}
-                strokeWidth={1.6}
+                size={14}
+                strokeWidth={1.7}
                 className={`text-paper-muted ${refreshing ? 'animate-spin text-cinnabar' : ''}`}
               />
               <span className="hidden lg:inline font-mono text-[11px] text-paper-muted">
