@@ -31,12 +31,12 @@ export const FeedLayoutSwitcher = memo(function FeedLayoutSwitcher({
     <div
       role="radiogroup"
       aria-label="视图布局"
-      className={`relative inline-flex h-8 items-center rounded-full border border-haze/70 bg-ink-raised/60 p-[2.5px] shadow-[inset_0_1px_1px_rgba(0,0,0,0.06)] backdrop-blur-md transition-colors hover:border-paper-faint/40 ${className}`}
+      className={`relative inline-flex h-8 items-center rounded-full border border-haze/70 bg-ink-raised/50 p-[2.5px] backdrop-blur-md transition-colors hover:border-paper-faint/30 ${className}`}
     >
       {/* 连续平滑滑动指示滑块 */}
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute top-[2.5px] bottom-[2.5px] left-[2.5px] w-[27px] rounded-full border border-cinnabar/35 bg-cinnabar/15 shadow-[0_1px_3px_rgba(217,67,47,0.18)] transition-transform duration-260 ease-[var(--ease-ink,cubic-bezier(0.22,1,0.36,1))]"
+        className="pointer-events-none absolute top-[2.5px] bottom-[2.5px] left-[2.5px] w-[27px] rounded-full border border-cinnabar/30 bg-cinnabar/15 shadow-xs transition-transform duration-260 ease-[var(--ease-ink,cubic-bezier(0.22,1,0.36,1))]"
         style={{
           transform: isCards ? 'translate3d(0, 0, 0)' : 'translate3d(27px, 0, 0)',
         }}
@@ -51,7 +51,7 @@ export const FeedLayoutSwitcher = memo(function FeedLayoutSwitcher({
         title="双栏卡片"
         onClick={() => handleSelect('cards')}
         className={`relative z-10 flex h-[27px] w-[27px] items-center justify-center rounded-full transition-colors duration-200 active:scale-95 ${
-          isCards ? 'text-cinnabar' : 'text-paper-muted hover:text-paper'
+          isCards ? 'text-cinnabar' : 'text-paper-faint hover:text-paper-muted'
         }`}
       >
         <LayoutGrid size={13.5} strokeWidth={isCards ? 2 : 1.5} />
@@ -66,7 +66,7 @@ export const FeedLayoutSwitcher = memo(function FeedLayoutSwitcher({
         title="经典列表"
         onClick={() => handleSelect('classic')}
         className={`relative z-10 flex h-[27px] w-[27px] items-center justify-center rounded-full transition-colors duration-200 active:scale-95 ${
-          !isCards ? 'text-cinnabar' : 'text-paper-muted hover:text-paper'
+          !isCards ? 'text-cinnabar' : 'text-paper-faint hover:text-paper-muted'
         }`}
       >
         <List size={14} strokeWidth={!isCards ? 2 : 1.5} />
