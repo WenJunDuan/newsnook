@@ -183,9 +183,10 @@
   .lead-hero.is-framed {
     width: calc(100% - 1.75rem);
     margin: 0.625rem 0.875rem 0.25rem;
-    border: 1px solid var(--color-haze);
+    border: none;
     border-radius: 1.1rem;
-    box-shadow: 0 12px 32px -20px rgb(0 0 0 / 0.55);
+    background-color: var(--color-ink-raised);
+    box-shadow: 0 10px 24px -14px rgb(0 0 0 / 0.22);
   }
 
   .lead-cover-veil {

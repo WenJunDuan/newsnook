@@ -183,4 +183,14 @@ assert.ok(
   '卡片模式下顶部标语「更大的世界，更好的判断」也必须始终展示',
 )
 
+// 验证顶部品牌区域视觉平衡设计：使用紧贴图形边界的 tight logo 与底部对齐
+const brandButton = container.querySelector('button[aria-label="有所闻 - 返回顶部"]')
+assert.ok(brandButton, '顶部应渲染返回顶部的品牌按钮')
+assert.ok(brandButton.className.includes('items-end'), '品牌按钮内 Logo 与标语应底部对齐')
+assert.ok(brandButton.className.includes('gap-1.5'), '品牌按钮内 Logo 与标语间距应紧凑平衡')
+assert.ok(
+  brandButton.querySelector('svg[data-brand-logo="tight"]'),
+  '品牌按钮内应使用精确贴合图形边界的 tight BrandLogo',
+)
+
 console.log('feed-layout-switcher: ok')

@@ -38,7 +38,7 @@
     "test:async-pool": "npx tsx scripts/async-pool.test.ts",
     "test:feed-refresh-concurrency": "npx tsx scripts/feed-refresh-concurrency.test.ts",
     "test:json-feed": "npx tsx scripts/json-feed.test.ts",
-    "test:home-feed-layout": "npx tsx scripts/home-feed-layout.test.ts && node --import tsx scripts/feed-layout-switcher.test.tsx",
+    "test:home-feed-layout": "npx tsx scripts/home-feed-layout.test.ts && node --import tsx scripts/brand-logo-tight.test.tsx && node --import tsx scripts/feed-layout-switcher.test.tsx",
     "test:article-title": "npx tsx scripts/article-title.test.ts",
     "test:feed-status": "npx tsx scripts/feed-status-custom-sources.test.ts",
     "test:feed-preview-images": "npx tsx scripts/feed-preview-images.test.ts && node --import tsx scripts/feed-preview-runtime.test.tsx && node --import tsx scripts/ink-image-loading.test.tsx",

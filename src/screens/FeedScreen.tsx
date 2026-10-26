@@ -852,26 +852,28 @@ export const FeedScreen = memo(function FeedScreen({
                     type="button"
                     onClick={onBrandTap}
                     aria-label="有所闻 - 返回顶部"
-                    className="group flex min-w-0 items-center gap-2.5 transition-opacity hover:opacity-85 active:scale-[0.99] focus:outline-hidden"
+                    className="group flex min-w-0 items-end gap-1.5 py-1 transition-opacity hover:opacity-85 active:scale-[0.99] focus:outline-hidden"
                   >
                     <BrandLogo
                       resolvedTheme={resolvedTheme}
-                      size={32}
-                      className="h-8 w-8 shrink-0 object-contain transition-transform duration-200 group-hover:scale-105 active:scale-95"
+                      tight
+                      size={18}
+                      className="h-[18px] w-auto shrink-0 transition-transform duration-200 group-hover:scale-105 active:scale-95"
                     />
-                    <span className="truncate font-display text-[13px] sm:text-[13.5px] font-normal tracking-[0.03em] text-paper-muted group-hover:text-paper transition-colors leading-none">
+                    <span className="truncate font-display text-[13px] sm:text-[13.5px] font-normal tracking-[0.03em] text-paper-muted group-hover:text-paper transition-colors leading-none pb-[1px]">
                       更大的世界，更好的判断
                     </span>
                     <span className="sr-only">有所闻</span>
                   </button>
                 ) : (
-                  <div className="flex min-w-0 items-center gap-2.5">
+                  <div className="flex min-w-0 items-end gap-1.5 py-1">
                     <BrandLogo
                       resolvedTheme={resolvedTheme}
-                      size={32}
-                      className="h-8 w-8 shrink-0 object-contain"
+                      tight
+                      size={18}
+                      className="h-[18px] w-auto shrink-0"
                     />
-                    <span className="truncate font-display text-[13px] sm:text-[13.5px] font-normal tracking-[0.03em] text-paper-muted leading-none">
+                    <span className="truncate font-display text-[13px] sm:text-[13.5px] font-normal tracking-[0.03em] text-paper-muted leading-none pb-[1px]">
                       更大的世界，更好的判断
                     </span>
                     <span className="sr-only">有所闻</span>
