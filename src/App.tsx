@@ -1204,7 +1204,9 @@ export default function App() {
       setSettingsRoute(null)
       setTab('today')
     },
-    onOpenBrowser: (url?: string) => { openBrowserWithUrl(url) },
+    onOpenBrowser: Capacitor.getPlatform() === 'android'
+      ? (url?: string) => { openBrowserWithUrl(url) }
+      : undefined,
     onManage: () => {
       if (activeSiteId) leaveActiveSite()
       setSettingsRoute({ name: 'presets' })
