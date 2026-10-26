@@ -78,7 +78,7 @@ export function SourceFilterChips({
   return (
     <div className="relative w-full">
       <div
-        className="horizontal-scroll-rail scroll-hidden max-w-[2400px] mx-auto flex items-center gap-1.5 overflow-x-auto px-4 lg:px-6 xl:px-8 2xl:px-10 py-1 select-none"
+        className="page-x horizontal-scroll-rail scroll-hidden max-w-[2400px] mx-auto flex items-center gap-1.5 overflow-x-auto lg:px-6 xl:px-8 2xl:px-10 py-1 select-none"
       >
         {sources.length > 1 && (
           <button

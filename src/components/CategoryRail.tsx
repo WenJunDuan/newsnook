@@ -244,7 +244,7 @@ export function CategoryRail({
     <div className="relative">
       <div
         ref={scrollerRef}
-        className="horizontal-scroll-rail scroll-hidden mask-fade-x relative flex gap-0.5 overflow-x-auto px-4 sm:px-6 md:px-8 lg:px-10"
+        className="page-x horizontal-scroll-rail scroll-hidden mask-fade-x relative flex gap-0.5 overflow-x-auto"
         role="tablist"
         aria-label="新闻分类"
       >
@@ -311,7 +311,7 @@ export function CategoryRail({
                 WebkitTouchCallout: 'none',
                 touchAction: 'pan-x',
               }}
-              className="custom-long-press-target relative shrink-0 px-3.5 py-1.5 text-paper hover:opacity-90"
+              className="custom-long-press-target relative shrink-0 px-3.5 py-1.5 text-paper hover:opacity-90 first:pl-0"
             >
               <span className={`block whitespace-nowrap font-display text-[15px] leading-none tracking-[0.012em] ${weight >= 0.5 ? 'font-medium text-paper' : 'font-normal text-paper/80'}`}>
                 {category.label}
