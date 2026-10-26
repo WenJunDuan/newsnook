@@ -132,4 +132,55 @@ await act(async () => {
 })
 assert.equal(feedLayoutChanged, 'classic', '在 FeedScreen 顶部点击列表选项应触发布局变更')
 
+// 验证无论卡片还是列表模式，顶部均统一保持品牌标题与「更大的世界，更好的判断」标语
+await act(async () => {
+  root.render(
+    <FeedScreen
+      title="有所闻"
+      caption="科技资讯"
+      articles={[]}
+      statuses={[]}
+      refreshing={false}
+      showLead={false}
+      readIds={new Set()}
+      laterIds={new Set()}
+      homeFeedLayout="classic"
+      onHomeFeedLayoutChange={() => {}}
+      onBrandTap={() => {}}
+      onOpen={() => {}}
+      onRefresh={async () => {}}
+    />,
+  )
+})
+
+assert.ok(
+  container.textContent?.includes('更大的世界，更好的判断'),
+  '经典列表模式下顶部标语「更大的世界，更好的判断」也必须始终展示',
+)
+
+await act(async () => {
+  root.render(
+    <FeedScreen
+      title="有所闻"
+      caption="科技资讯"
+      articles={[]}
+      statuses={[]}
+      refreshing={false}
+      showLead={false}
+      readIds={new Set()}
+      laterIds={new Set()}
+      homeFeedLayout="cards"
+      onHomeFeedLayoutChange={() => {}}
+      onBrandTap={() => {}}
+      onOpen={() => {}}
+      onRefresh={async () => {}}
+    />,
+  )
+})
+
+assert.ok(
+  container.textContent?.includes('更大的世界，更好的判断'),
+  '卡片模式下顶部标语「更大的世界，更好的判断」也必须始终展示',
+)
+
 console.log('feed-layout-switcher: ok')

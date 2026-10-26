@@ -845,11 +845,7 @@ export const FeedScreen = memo(function FeedScreen({
               <button
                 type="button"
                 onClick={onBrandTap}
-                className={`shrink-0 font-display text-paper ${
-                  useCompactCards
-                    ? 'text-[23px] leading-none tracking-[0.015em]'
-                    : 'text-[19px] sm:text-[20px] leading-tight tracking-[0.01em]'
-                } md:text-[20px] lg:text-[22px]`}
+                className="shrink-0 font-display text-paper text-[23px] leading-none tracking-[0.015em] md:text-[20px] lg:text-[22px]"
               >
                 {title}
               </button>
@@ -858,8 +854,8 @@ export const FeedScreen = memo(function FeedScreen({
                 {title}
               </h1>
             )}
-            {isBrandedHome && useCompactCards && (
-              <span className="hidden min-[390px]:inline-block max-w-[9.5rem] truncate font-mono text-[9px] tracking-[0.08em] text-paper-faint md:hidden">
+            {isBrandedHome && (
+              <span className="hidden min-[360px]:inline-block max-w-[9.5rem] truncate font-mono text-[9px] tracking-[0.08em] text-paper-faint md:hidden">
                 更大的世界，更好的判断
               </span>
             )}
