@@ -64,3 +64,5 @@ video/
 # Local screenshot capture probes / thumbs (keep committed docs/screenshots/*.jpg)
 docs/screenshots/_*
 .gemini/
+
+shots/

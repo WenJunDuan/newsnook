@@ -26,7 +26,7 @@ interface Props {
   onMoveCategory?: (id: CategoryId, direction: -1 | 1) => void
 }
 
-const BASE_INDICATOR_WIDTH = 14 // 14px 对应原来的 w-3.5
+const BASE_INDICATOR_WIDTH = 16 // 16px 精致杂志书签指示条
 
 /**
  * 墨砚分类轨道：支持跟手横滑实时联动、丝滑水墨拉伸与自动居中对齐。
@@ -311,13 +311,13 @@ export function CategoryRail({
                 WebkitTouchCallout: 'none',
                 touchAction: 'pan-x',
               }}
-              className="custom-long-press-target relative shrink-0 px-3 py-1.5 text-paper hover:opacity-90"
+              className="custom-long-press-target relative shrink-0 px-3.5 py-1.5 text-paper hover:opacity-90"
             >
-              <span className={`block whitespace-nowrap font-display text-[14.5px] leading-none tracking-wide ${weight >= 0.5 ? 'font-medium' : 'font-normal'}`}>
+              <span className={`block whitespace-nowrap font-display text-[15px] leading-none tracking-[0.012em] ${weight >= 0.5 ? 'font-medium text-paper' : 'font-normal text-paper/80'}`}>
                 {category.label}
               </span>
               {/* 占位间距，保持高度与垂直居中一致 */}
-              <span className="mx-auto mt-1 block h-px w-3.5 opacity-0" aria-hidden />
+              <span className="mx-auto mt-1.5 block h-px w-4 opacity-0" aria-hidden />
             </button>
           )
         })}
@@ -325,7 +325,7 @@ export function CategoryRail({
         {/* 唯一动态浮动指示器 */}
         {currentCenter > 0 && (
           <span
-            className="pointer-events-none absolute bottom-1 left-0 h-[2px] rounded-full bg-cinnabar shadow-[0_1px_4px_rgba(196,92,74,0.35)] will-change-transform"
+            className="pointer-events-none absolute bottom-1 left-0 h-[2.5px] rounded-full bg-cinnabar shadow-[0_1px_5px_rgba(196,92,74,0.4)] will-change-transform"
             style={{
               width: `${indicatorWidth}px`,
               transform: `translate3d(${indicatorLeft}px, 0, 0)`,

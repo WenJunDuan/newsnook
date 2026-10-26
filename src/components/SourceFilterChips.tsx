@@ -78,20 +78,20 @@ export function SourceFilterChips({
   return (
     <div className="relative w-full">
       <div
-        className="horizontal-scroll-rail scroll-hidden max-w-[2400px] mx-auto flex items-center gap-1.5 overflow-x-auto px-4 lg:px-6 xl:px-8 2xl:px-10 py-0.5 select-none"
+        className="horizontal-scroll-rail scroll-hidden max-w-[2400px] mx-auto flex items-center gap-1.5 overflow-x-auto px-4 lg:px-6 xl:px-8 2xl:px-10 py-1 select-none"
       >
         {sources.length > 1 && (
           <button
             type="button"
             onClick={() => onSelect(null)}
-            className={`group flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-full px-2 font-mono text-[10.5px] transition-all duration-200 active:scale-95 ${
+            className={`group flex h-[26px] shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 font-mono text-[11px] transition-all duration-200 active:scale-95 ${
               selectedSourceId === null
-                ? 'bg-paper text-ink font-medium shadow-2xs ring-1 ring-paper/25'
-                : 'border border-haze/80 bg-ink-raised/60 text-paper-muted/90 hover:border-paper-faint/50 hover:bg-ink-raised hover:text-paper'
+                ? 'bg-paper text-ink font-medium shadow-[0_1px_3px_rgba(0,0,0,0.08)] ring-1 ring-paper/20'
+                : 'border border-haze/60 bg-ink-raised/40 text-paper-muted/80 hover:border-paper-faint/40 hover:bg-ink-raised hover:text-paper'
             }`}
           >
             <span>全部</span>
-            <span className={`font-mono text-[9px] leading-none ${selectedSourceId === null ? 'text-ink/75 font-semibold' : 'text-paper-faint/80 group-hover:text-paper-muted'}`}>
+            <span className={`font-mono text-[9.5px] leading-none ${selectedSourceId === null ? 'text-ink/70 font-semibold' : 'text-paper-faint/70 group-hover:text-paper-muted'}`}>
               {sources.length}
             </span>
           </button>
@@ -123,17 +123,17 @@ export function SourceFilterChips({
               }}
               aria-haspopup="menu"
               aria-label={`${source.name}${favorite ? '，已收藏' : ''}，长按管理`}
-              className={`custom-long-press-target group flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-full px-2 text-[10.5px] transition-all duration-200 active:scale-95 ${
+              className={`custom-long-press-target group flex h-[26px] shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-[11px] transition-all duration-200 active:scale-95 ${
                 isSelected
-                  ? 'bg-paper text-ink font-medium shadow-2xs ring-1 ring-paper/25'
-                  : 'border border-haze/80 bg-ink-raised/60 text-paper-muted/90 hover:border-paper-faint/50 hover:bg-ink-raised hover:text-paper'
+                  ? 'bg-paper text-ink font-medium shadow-[0_1px_3px_rgba(0,0,0,0.08)] ring-1 ring-paper/20'
+                  : 'border border-haze/60 bg-ink-raised/40 text-paper-muted/80 hover:border-paper-faint/40 hover:bg-ink-raised hover:text-paper'
               }`}
               style={{ WebkitTouchCallout: 'none', touchAction: 'pan-x' }}
             >
               <span className="truncate max-w-[140px]">{source.name}</span>
               {favorite && <BookmarkCheck size={10} strokeWidth={1.8} className={isSelected ? 'text-ink/75' : 'text-cinnabar-soft'} />}
               {typeof count === 'number' && (
-                <span className={`font-mono text-[9px] leading-none ${isSelected ? 'text-ink/75 font-semibold' : 'text-paper-faint/80 group-hover:text-paper-muted'}`}>
+                <span className={`font-mono text-[9.5px] leading-none ${isSelected ? 'text-ink/70 font-semibold' : 'text-paper-faint/70 group-hover:text-paper-muted'}`}>
                   {count}
                 </span>
               )}

@@ -168,11 +168,11 @@ function CategoryPeek({
         ) : (
           grouped.map(([bucket, items]) => (
             <div key={bucket}>
-              <div className="page-x flex items-center gap-2.5 pt-5 pb-1.5">
-                <span className="font-mono text-[11px] font-medium tracking-[0.16em] text-paper-muted">{bucket}</span>
-                <span className="h-px flex-1 bg-haze" aria-hidden />
+              <div className="page-x flex items-center gap-2.5 pt-5 pb-2">
+                <span className="font-mono text-[11px] font-medium tracking-[0.18em] text-paper-muted/90">{bucket}</span>
+                <span className="h-px w-8 bg-gradient-to-r from-haze/80 to-transparent" aria-hidden />
               </div>
-              <ul className="divide-y divide-haze">
+              <ul className="divide-y divide-haze/35">
                 {items.map((article) => (
                   <ArticleRow
                     key={article.id}
@@ -681,11 +681,11 @@ export const FeedScreen = memo(function FeedScreen({
             /* 移动端经典单列时间线：按今天/昨天/更早分组 */
             grouped.map(([bucket, items]) => (
               <div key={bucket}>
-                <div className="page-x flex items-center gap-2.5 pt-4 pb-1.5 lg:px-6 xl:px-8 2xl:px-10">
-                  <span className="font-mono text-[11px] font-medium tracking-[0.16em] text-paper-muted">{bucket}</span>
-                  <span className="h-px flex-1 bg-haze" aria-hidden />
+                <div className="page-x flex items-center gap-2.5 pt-5 pb-2 lg:px-6 xl:px-8 2xl:px-10">
+                  <span className="font-mono text-[11px] font-medium tracking-[0.18em] text-paper-muted/90">{bucket}</span>
+                  <span className="h-px w-8 bg-gradient-to-r from-haze/80 to-transparent" aria-hidden />
                 </div>
-                <ul className="divide-y divide-haze">
+                <ul className="divide-y divide-haze/35">
                   {items.map((article) => (
                     <ArticleRow
                       key={article.id}
@@ -801,7 +801,7 @@ export const FeedScreen = memo(function FeedScreen({
 
   return (
     <section className="relative flex min-h-0 flex-1 flex-col">
-      <header className="relative z-20 shrink-0 bg-ink/92 pt-1.5 pb-1 backdrop-blur-xl border-b border-haze/40">
+      <header className="relative z-20 shrink-0 bg-ink/90 pt-2 pb-1.5 backdrop-blur-xl border-b border-haze/30">
         <div className="page-x lg:px-6 xl:px-8 2xl:px-10 max-w-[2400px] mx-auto flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             {onBack && (
@@ -816,13 +816,13 @@ export const FeedScreen = memo(function FeedScreen({
                 className={`shrink-0 font-display text-paper ${
                   useCompactCards
                     ? 'text-[23px] leading-none tracking-[0.015em]'
-                    : 'text-[18px] leading-tight'
+                    : 'text-[19px] sm:text-[20px] leading-tight tracking-[0.01em]'
                 } md:text-[20px] lg:text-[22px]`}
               >
                 {title}
               </button>
             ) : (
-              <h1 className="shrink-0 font-display text-[18px] leading-tight text-paper md:text-[20px] lg:text-[22px]">
+              <h1 className="shrink-0 font-display text-[19px] sm:text-[20px] leading-tight text-paper md:text-[20px] lg:text-[22px]">
                 {title}
               </h1>
             )}
@@ -849,9 +849,9 @@ export const FeedScreen = memo(function FeedScreen({
                 type="button"
                 onClick={onOpenLocalSearch}
                 aria-label="本地搜索已缓存内容"
-                className="flex h-7.5 w-7.5 lg:h-8 lg:w-8 shrink-0 items-center justify-center rounded-lg border border-transparent lg:border-haze/70 lg:bg-ink-raised/50 lg:hover:bg-ink-raised lg:hover:border-paper-faint/30 transition-all text-paper-muted hover:text-paper"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent hover:border-haze/60 hover:bg-ink-raised/50 lg:rounded-lg lg:border-haze/70 lg:bg-ink-raised/50 lg:hover:bg-ink-raised lg:hover:border-paper-faint/30 transition-all text-paper-muted hover:text-paper"
               >
-                <Search size={14} strokeWidth={1.6} />
+                <Search size={14.5} strokeWidth={1.6} />
               </button>
             )}
 
@@ -859,12 +859,12 @@ export const FeedScreen = memo(function FeedScreen({
               type="button"
               onClick={() => void onRefresh()}
               aria-label="刷新"
-              className={`relative h-7.5 w-7.5 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-transparent text-paper-muted transition-all hover:text-paper active:scale-95 lg:h-8 lg:w-auto lg:border-haze/70 lg:bg-ink-raised/50 lg:px-2.5 lg:hover:border-paper-faint/30 lg:hover:bg-ink-raised ${
+              className={`relative h-8 w-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-transparent hover:border-haze/60 hover:bg-ink-raised/50 text-paper-muted transition-all hover:text-paper active:scale-95 lg:h-8 lg:w-auto lg:rounded-lg lg:border-haze/70 lg:bg-ink-raised/50 lg:px-2.5 lg:hover:border-paper-faint/30 lg:hover:bg-ink-raised ${
                 isBrandedHome && !useCompactCards ? 'hidden lg:flex' : 'flex'
               }`}
             >
               <RotateCw
-                size={14}
+                size={14.5}
                 strokeWidth={1.6}
                 className={`text-paper-muted ${refreshing ? 'animate-spin text-cinnabar' : ''}`}
               />
@@ -881,7 +881,7 @@ export const FeedScreen = memo(function FeedScreen({
         </div>
 
         {categoryId && categories && categories.length > 0 && onCategoryChange && (
-          <div className="mt-0.5 lg:hidden" data-tour="category-rail">
+          <div className="mt-1 lg:hidden" data-tour="category-rail">
             <CategoryRail
               categories={categories}
               activeId={categoryId}
@@ -898,7 +898,7 @@ export const FeedScreen = memo(function FeedScreen({
         )}
 
         {availableSources && availableSources.length > 0 && onSelectSource && (
-          <div className="mt-0.5 lg:mt-1.5">
+          <div className="mt-1 lg:mt-1.5">
             <SourceFilterChips
               sources={availableSources}
               selectedSourceId={selectedSourceId ?? null}
